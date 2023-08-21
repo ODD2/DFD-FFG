@@ -1,0 +1,13 @@
+logs
+__pycache__
+.ipynb_checkpoints
+.DS_Store
+*.swp
+wandb/
+*.env
+datasets/
+datasets
+misc/
+misc
+.cache/
+.cache
