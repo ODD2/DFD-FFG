@@ -1,0 +1,12 @@
+name: zeroni
+channels:
+  - defaults
+dependencies:
+  - python=3.8
+  - torchvision
+  - torchaudio
+  - pytorch
+  - pytorch-cuda=11.7
+  - lightning
+  - ipykernel
+prefix: /home/od/anaconda3/envs/zeroni

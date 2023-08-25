@@ -1,0 +1,10 @@
+{
+    "python.analysis.exclude": [
+        "MNIST",
+        "datasets",
+        "logs",
+        "misc",
+        "wandb",
+        "configs"
+    ]
+}
