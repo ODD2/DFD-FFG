@@ -1,37 +1,4 @@
-from time import time
-import logging
 from .base import *
-
-
-class RandomDownScale(alb.core.transforms_interface.ImageOnlyTransform):
-    def __init__(self, ratio_list, always_apply=False, p=0.5):
-        super(RandomDownScale, self).__init__(always_apply, p)
-        self.ratio_list = ratio_list
-
-    def apply(self, image, scale=1.0, **params):
-        return self.randomdownscale(image, scale)
-
-    def randomdownscale(self, img, scale, **params):
-        keep_input_shape = True
-        H, W, C = img.shape
-        img_ds = cv2.resize(
-            img,
-            (int(W / scale), int(H / scale)),
-            interpolation=cv2.INTER_CUBIC
-        )
-        logging.debug(f"Downscale Ratio: {scale}")
-        if keep_input_shape:
-            img_ds = cv2.resize(img_ds, (W, H), interpolation=cv2.INTER_CUBIC)
-
-        return img_ds
-
-    def get_params(self):
-        return {
-            "scale": np.random.randint(self.ratio_list[0], self.ratio_list[1] + 1)
-        }
-
-    def get_transform_init_args_names(self):
-        return ("ratio_list",)
 
 
 class FFPPSampleStrategy(IntEnum):
@@ -61,69 +28,7 @@ class FFPPAugmentation(IntFlag):
     SHARPEN = auto()
 
 
-class DeepFakeDataModule(pl.LightningDataModule):
-    def __init__(
-            self,
-            data_dir: str,
-            batch_size: int = 24,
-            num_workers: int = 8,
-            vid_ext: str = ".avi",
-            clip_duration: int = 4,
-            num_frames: int = 10,
-            pack: bool = False
-    ):
-        super().__init__()
-        # generic parameters
-        self.transform = lambda x: x
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-
-        # dataset metadata
-        self.data_dir = data_dir
-        self.vid_ext = vid_ext
-        self.num_frames = num_frames
-        self.clip_duration = clip_duration
-        self.pack = pack
-
-        # dataset splits
-        self._train_dataset = None
-        self._val_dataset = None
-        self._test_dataset = None
-        self._predict_dataset = None
-
-    def create_dataloader(self, dataset, shuffle=False):
-        return DataLoader(
-            dataset,
-            batch_size=self.batch_size,
-            num_workers=self.num_workers,
-            shuffle=shuffle,
-            collate_fn=dataset.collate_fn,
-            pin_memory=True
-        )
-
-    def affine_model(self, model):
-        self.transform = model.transform
-
-    def prepare_data(self):
-        raise Exception("Implementation Required")
-
-    def setup(self, stage: str):
-        raise Exception("Implementation Required")
-
-    def train_dataloader(self):
-        return self.create_dataloader(self._train_dataset, shuffle=True)
-
-    def val_dataloader(self):
-        return self.create_dataloader(self._val_dataset)
-
-    def test_dataloader(self):
-        return self.create_dataloader(self._test_dataset)
-
-    def predict_dataloader(self):
-        return self.create_dataloader(self._predict_dataset)
-
-
-class FFPP(Dataset):
+class FFPP(DeepFakeDataset):
     TYPE_DIRS = {
         'REAL': 'real/',
         'DF': 'DF/',
@@ -135,41 +40,50 @@ class FFPP(Dataset):
     COMPRESSIONS = {'c23', 'raw'}
 
     @classmethod
-    def get_cache_dir(cls, df_type, comp):
-        return path.expanduser(
-            f'./.cache/{cls.__name__}-{df_type}-{comp}.pkl'
-        )
+    def prepare_data(cls, data_dir, compressions, vid_ext):
+        progress_bar = tqdm(cls.TYPE_DIRS.keys())
+        for df_type in progress_bar:
+            for comp in compressions:
+                # description for progress bar
+                progress_bar.set_description(f"{df_type}: {comp}/videos")
+
+                # compose the path for metadata cache
+                meta_cache_path = path.expanduser(cls.get_cache_dir(df_type, comp))
+
+                # next entity if cache exists
+                if path.exists(meta_cache_path):
+                    continue
+
+                # video directory for df_type of compression
+                video_dir = path.join(data_dir, cls.TYPE_DIRS[df_type], f'{comp}/videos')
+
+                # build metadata
+                video_metas = cls.build_metadata(data_dir, video_dir, vid_ext)
+
+                # cache the metadata
+                makedirs(path.dirname(meta_cache_path), exist_ok=True)
+                with open(meta_cache_path, 'wb') as f:
+                    pickle.dump(video_metas, f)
 
     def __init__(
         self,
-        data_dir: str,
-        vid_ext: str,
         df_types: List[str],
         compressions: List[str],
-        num_frames: int,
-        clip_duration: int,
-        transform: Optional[Callable],
         n_px: int,
-        split: str,
-        pack: bool,
         strategy: FFPPSampleStrategy,
         augmentation: FFPPAugmentation,
-        force_random_speed: Optional[bool] = None
+        *args,
+        force_random_speed: Optional[bool] = None,
+        **kargs
     ):
+        super().__init__(*args, **kargs)
         # configurations
-        self.data_dir = data_dir
-        self.vid_ext = vid_ext
         self.df_types = df_types
         self.compressions = compressions
-        self.num_frames = num_frames
-        self.clip_duration = clip_duration
-        self.transform = transform
         self.n_px = n_px
-        self.split = split
-        self.pack = pack
         self.strategy = strategy
         self.augmentation = augmentation
-        self.train = (True if split == "train" else False)
+        self.train = (True if self.split == "train" else False)
         self.random_speed = (
             force_random_speed
             if not force_random_speed == None else
@@ -454,7 +368,7 @@ class FFPP(Dataset):
             self.video_table[df_type] = {}
             for comp in self.compressions:
                 # compose cache directory path
-                meta_cache_path = path.expanduser(FFPP.get_cache_dir(df_type, comp))
+                meta_cache_path = path.expanduser(self.get_cache_dir(df_type, comp))
 
                 # load metadatas
                 with open(meta_cache_path, 'rb') as f:
@@ -553,6 +467,7 @@ class FFPP(Dataset):
 
             c_idx = random.randint(*interval)
             desire_item_indices = [idx, c_idx]
+
         elif self.strategy == FFPPSampleStrategy.CONTRAST_PAIR:
             raise NotImplementedError()
 
@@ -573,8 +488,6 @@ class FFPP(Dataset):
 
         return item_entities
 
-    # The 'idx' here represents the entity index from the __getitem__.
-    # Depending on self.pack, the entity index either indicates a clip or the video.
     def get_entity(self, idx, replay=None, with_entity_info=False):
         video_idx, df_type, comp, video_name, num_clips = self.video_info(idx)
         video_meta = self.video_table[df_type][comp][video_name]
@@ -710,26 +623,6 @@ class FFPP(Dataset):
         df_type, comp, name = self.video_info(idx)[1:4]
         return self.video_table[df_type][comp][name]
 
-    def collate_fn(self, batch):
-        item_videos, item_labels, item_masks, item_entity_indices = list(zip(*batch))
-
-        batch_entity_clips = [i for l in item_videos for i in l]
-        batch_entity_label = [i for l in item_labels for i in l]
-        batch_entity_masks = [i for l in item_masks for i in l]
-        batch_entity_indices = [i for l in item_entity_indices for i in l]
-
-        clips = torch.cat(batch_entity_clips)
-        masks = torch.cat(batch_entity_masks)
-
-        # post-process the label & index to match the shape of corresponding clips
-        num_clips_per_entity = torch.tensor([entity_clips.shape[0] for entity_clips in batch_entity_clips])
-        label = torch.tensor(batch_entity_label).repeat_interleave(num_clips_per_entity)
-        index = torch.tensor(batch_entity_indices).repeat_interleave(num_clips_per_entity)
-
-        assert clips.shape[0] == masks.shape[0] == label.shape[0] == index.shape[0]
-
-        return [clips, label, masks, index]
-
 
 class FFPPDataModule(DeepFakeDataModule):
     def __init__(
@@ -760,47 +653,7 @@ class FFPPDataModule(DeepFakeDataModule):
         self.n_px = model.n_px
 
     def prepare_data(self):
-        progress_bar = tqdm(FFPP.TYPE_DIRS.keys())
-        for df_type in progress_bar:
-            for comp in self.compressions:
-                video_metas = {}
-
-                # description for progress bar
-                progress_bar.set_description(f"{df_type}: {comp}/videos")
-
-                # compose the path for metadata cache
-                meta_cache_path = path.expanduser(FFPP.get_cache_dir(df_type, comp))
-
-                # next entity if cache exists
-                if path.exists(meta_cache_path):
-                    continue
-
-                # video directory for df_type of compression
-                video_dir = path.join(self.data_dir, FFPP.TYPE_DIRS[df_type], f'{comp}/videos')
-
-                # build metadata
-                for f in scandir(video_dir):
-                    if self.vid_ext in f.name:
-                        vid_reader = torchvision.io.VideoReader(
-                            f.path,
-                            "video"
-                        )
-                        try:
-                            fps = vid_reader.get_metadata()["video"]["fps"][0]
-                            duration = vid_reader.get_metadata()["video"]["duration"][0]
-                            video_metas[f.name[:-len(self.vid_ext)]] = {
-                                "fps": fps,
-                                "frames": round(duration * fps),
-                                "duration": duration,
-                                "path": f.path[len(self.data_dir):-len(self.vid_ext)]
-                            }
-                        except:
-                            logging.error(f"Error Occur During Video Table Creation: {f.path}")
-
-                # cache the metadata
-                makedirs(path.dirname(meta_cache_path), exist_ok=True)
-                with open(meta_cache_path, 'wb') as f:
-                    pickle.dump(video_metas, f)
+        FFPP.prepare_data(self.data_dir, self.compressions, self.vid_ext)
 
     def setup(self, stage: str):
         # Assign train/val datasets for use in dataloaders
@@ -824,6 +677,7 @@ class FFPPDataModule(DeepFakeDataModule):
                 strategy=self.strategy,
                 augmentation=self.augmentations
             )
+
         elif stage == "validate":
             self._val_dataset = data_cls(
                 split="val",
@@ -832,7 +686,6 @@ class FFPPDataModule(DeepFakeDataModule):
                 augmentation=FFPPAugmentation.NONE
             )
 
-        # Assign test dataset for use in dataloader(s)
         elif stage == "test":
             self._test_dataset = data_cls(
                 split="test",
@@ -855,7 +708,7 @@ if __name__ == "__main__":
         batch_size=24,
         num_workers=16,
         force_random_speed=False,
-        strategy=FFPPSampleStrategy.CONTRAST_RAND,
+        strategy=FFPPSampleStrategy.NORMAL,
         augmentations=(
             FFPPAugmentation.NORMAL |
             FFPPAugmentation.VIDEO |
@@ -874,27 +727,27 @@ if __name__ == "__main__":
     dtm.setup("validate")
     dtm.setup("test")
 
-    # iterate the whole dataset for visualization and sanity check
-    for split, iterable in {
-        'train': dtm._train_dataset, 'val': dtm._val_dataset, 'test': dtm._test_dataset
-    }.items():
-        save_folder = f"./misc/extern/dump_dataset/ffpp/{split}/"
-        # entity dump
-        # for entity_idx in tqdm(range(len(iterable))):
-        #     if (entity_idx > 100):
-        #         break
-        #     dataset_entity_visualize(iterable.get_entity(entity_idx, with_entity_info=True), base_dir=save_folder)
+    # # iterate the whole dataset for visualization and sanity check
+    # for split, iterable in {
+    #     'train': dtm._train_dataset, 'val': dtm._val_dataset, 'test': dtm._test_dataset
+    # }.items():
+    #     save_folder = f"./misc/extern/dump_dataset/ffpp/{split}/"
+    #     # entity dump
+    #     # for entity_idx in tqdm(range(len(iterable))):
+    #     #     if (entity_idx > 100):
+    #     #         break
+    #     #     dataset_entity_visualize(iterable.get_entity(entity_idx, with_entity_info=True), base_dir=save_folder)
 
-        # item dump
-        for item_idx in tqdm(range(len(iterable))):
-            if (item_idx > 100):
-                break
-            save_prefix = f"{item_idx}-"
-            for entity_data in iterable.get_item(item_idx, with_entity_info=True):
-                dataset_entity_visualize(entity_data, base_dir=save_folder, save_prefix=save_prefix)
+    #     # item dump
+    #     for item_idx in tqdm(range(len(iterable))):
+    #         if (item_idx > 100):
+    #             break
+    #         save_prefix = f"{item_idx}-"
+    #         for entity_data in iterable.get_item(item_idx, with_entity_info=True):
+    #             dataset_entity_visualize(entity_data, base_dir=save_folder, save_prefix=save_prefix)
 
-    # # iterate the all dataloaders for debugging.
-    # for fn in [dtm.train_dataloader, dtm.val_dataloader, dtm.test_dataloader]:
-    #     iterable = fn()
-    #     for batch in tqdm(iterable):
-    #         pass
+    # iterate the all dataloaders for debugging.
+    for fn in [dtm.train_dataloader, dtm.val_dataloader, dtm.test_dataloader]:
+        iterable = fn()
+        for batch in tqdm(iterable):
+            pass
