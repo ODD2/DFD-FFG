@@ -74,7 +74,7 @@ class DeepFakeDataModule(pl.LightningDataModule):
     ):
         super().__init__()
         # generic parameters
-        self.transform = None
+        self.transform = lambda x: x
         self.batch_size = batch_size
         self.num_workers = num_workers
 
@@ -500,10 +500,24 @@ class FFPP(Dataset):
         # stacking up the amount of data clips for further usage
         self.stack_video_clips = [0]
         self.real_clip_idx = {}
+        self.fake_clip_idx = {
+            'back': {},
+            'fore': {}
+        }
         for df_type, _, idx, i in self.video_list:
             self.stack_video_clips.append(self.stack_video_clips[-1] + i)
+            interval = [self.stack_video_clips[-2], self.stack_video_clips[-1] - 1]
             if df_type == "REAL":
-                self.real_clip_idx[idx] = [self.stack_video_clips[-2], self.stack_video_clips[-1] - 1]
+                self.real_clip_idx[idx] = interval
+            else:
+                back_idx, fore_idx = idx.split('_')
+                if (not back_idx in self.fake_clip_idx['back']):
+                    self.fake_clip_idx['back'][back_idx] = []
+                if (not fore_idx in self.fake_clip_idx['fore']):
+                    self.fake_clip_idx['fore'][fore_idx] = []
+                self.fake_clip_idx['back'][back_idx].append(interval)
+                self.fake_clip_idx['fore'][fore_idx].append(interval)
+
         self.stack_video_clips.pop(0)
 
     def __len__(self):
@@ -513,24 +527,51 @@ class FFPP(Dataset):
             return self.stack_video_clips[-1]
 
     def __getitem__(self, idx):
+        item_entities = self.get_item(idx)
+        return [[entity[k] for entity in item_entities] for k in item_entities[0].keys()]
+
+    def get_item(self, idx, with_entity_info=False):
         desire_item_indices = []
+        logging.debug(f"Sample strategy:{self.strategy}")
         if self.strategy == FFPPSampleStrategy.NORMAL:
             desire_item_indices = [idx]
+
+        elif self.strategy == FFPPSampleStrategy.CONTRAST_RAND:
+            _, video_df_type, _, _, _ = self.video_info(idx)
+            logging.debug(f"Source Index/DF_TYPE: {idx}/{video_df_type}")
+            if (video_df_type == "REAL"):
+                logging.debug(f"Seek for a Fake Entity...")
+                ground = random.choice(list(self.fake_clip_idx.keys()))
+                video_name = random.choice(list(self.fake_clip_idx[ground].keys()))
+                interval = random.choice(self.fake_clip_idx[ground][video_name])
+                logging.debug(f"Pair with {video_name} at {ground}-ground ...")
+            else:
+                logging.debug(f"Seek for a Real Entity...")
+                video_name = random.choice(list(self.real_clip_idx.keys()))
+                interval = self.real_clip_idx[video_name]
+                logging.debug(f"Pair with {video_name}...")
+
+            c_idx = random.randint(*interval)
+            desire_item_indices = [idx, c_idx]
         elif self.strategy == FFPPSampleStrategy.CONTRAST_PAIR:
             raise NotImplementedError()
-        elif self.strategy == FFPPSampleStrategy.CONTRAST_RAND:
-            raise NotImplementedError()
+
         elif self.strategy == FFPPSampleStrategy.QUALITY_PAIR:
             raise NotImplementedError()
+
         else:
             raise NotImplementedError()
 
-        item_dicts = [
-            self.get_entity(desire_item_index)
+        logging.debug(f"Item desires the entities:{desire_item_indices}")
+        item_entities = [
+            self.get_entity(
+                desire_item_index,
+                with_entity_info=with_entity_info
+            )
             for desire_item_index in desire_item_indices
         ]
 
-        return [[item_dict[k] for item_dict in item_dicts] for k in item_dicts[0].keys()]
+        return item_entities
 
     # The 'idx' here represents the entity index from the __getitem__.
     # Depending on self.pack, the entity index either indicates a clip or the video.
@@ -608,8 +649,7 @@ class FFPP(Dataset):
             frames = torch.stack(frames)
 
             # transformation
-            if (self.transform):
-                frames = self.transform(frames)
+            frames = self.transform(frames)
 
             # padding and masking missing frames.
             mask = torch.tensor(
@@ -671,24 +711,20 @@ class FFPP(Dataset):
         return self.video_table[df_type][comp][name]
 
     def collate_fn(self, batch):
-        _clips, _label, _masks, _index = list(zip(*batch))
+        item_videos, item_labels, item_masks, item_entity_indices = list(zip(*batch))
 
-        _clips = [i for l in _clips for i in l]
-        _label = [i for l in _label for i in l]
-        _masks = [i for l in _masks for i in l]
-        _index = [i for l in _index for i in l]
+        batch_entity_clips = [i for l in item_videos for i in l]
+        batch_entity_label = [i for l in item_labels for i in l]
+        batch_entity_masks = [i for l in item_masks for i in l]
+        batch_entity_indices = [i for l in item_entity_indices for i in l]
 
-        clips = torch.cat(_clips)
-        masks = torch.cat(_masks)
+        clips = torch.cat(batch_entity_clips)
+        masks = torch.cat(batch_entity_masks)
 
-        if self.pack:
-            # post-process the label & index to match the shape of corresponding clips
-            num_video_clips = torch.tensor([video_clips.shape[0] for video_clips in _clips])
-            label = torch.tensor(_label).repeat_interleave(num_video_clips)
-            index = torch.tensor(_index).repeat_interleave(num_video_clips)
-        else:
-            label = torch.tensor(_label)
-            index = torch.tensor(_index)
+        # post-process the label & index to match the shape of corresponding clips
+        num_clips_per_entity = torch.tensor([entity_clips.shape[0] for entity_clips in batch_entity_clips])
+        label = torch.tensor(batch_entity_label).repeat_interleave(num_clips_per_entity)
+        index = torch.tensor(batch_entity_indices).repeat_interleave(num_clips_per_entity)
 
         assert clips.shape[0] == masks.shape[0] == label.shape[0] == index.shape[0]
 
@@ -816,17 +852,19 @@ if __name__ == "__main__":
         ["REAL", "DF", "FS", "F2F", "NT"],
         ["c23"],
         data_dir="datasets/ffpp/",
-        batch_size=8,
-        num_workers=0,
+        batch_size=24,
+        num_workers=16,
         force_random_speed=False,
+        strategy=FFPPSampleStrategy.CONTRAST_RAND,
         augmentations=(
             FFPPAugmentation.NORMAL |
             FFPPAugmentation.VIDEO |
             FFPPAugmentation.VIDEO_RRC |
             FFPPAugmentation.FRAME
         ),
-        pack=True,
+        pack=False,
     )
+
     model = Dummy()
     model.n_px = 224
     model.transform = lambda x: x
@@ -837,16 +875,25 @@ if __name__ == "__main__":
     dtm.setup("test")
 
     # iterate the whole dataset for visualization and sanity check
-    # for split, iterable in {
-    #     'train': dtm._train_dataset, 'val': dtm._val_dataset, 'test': dtm._test_dataset
-    # }.items():
-    #     save_folder = f"./misc/extern/dump_dataset/ffpp/{split}/"
-    #     for entity_idx in tqdm(range(len(iterable))):
-    #         if (entity_idx > 100):
-    #             break
-    #         dataset_entity_visualize(iterable.get_entity(entity_idx, with_entity_info=True), base_dir=save_folder)
+    for split, iterable in {
+        'train': dtm._train_dataset, 'val': dtm._val_dataset, 'test': dtm._test_dataset
+    }.items():
+        save_folder = f"./misc/extern/dump_dataset/ffpp/{split}/"
+        # entity dump
+        # for entity_idx in tqdm(range(len(iterable))):
+        #     if (entity_idx > 100):
+        #         break
+        #     dataset_entity_visualize(iterable.get_entity(entity_idx, with_entity_info=True), base_dir=save_folder)
 
-    # iterate the all dataloaders for debugging.
+        # item dump
+        for item_idx in tqdm(range(len(iterable))):
+            if (item_idx > 100):
+                break
+            save_prefix = f"{item_idx}-"
+            for entity_data in iterable.get_item(item_idx, with_entity_info=True):
+                dataset_entity_visualize(entity_data, base_dir=save_folder, save_prefix=save_prefix)
+
+    # # iterate the all dataloaders for debugging.
     # for fn in [dtm.train_dataloader, dtm.val_dataloader, dtm.test_dataloader]:
     #     iterable = fn()
     #     for batch in tqdm(iterable):

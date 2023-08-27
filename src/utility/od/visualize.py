@@ -2,7 +2,7 @@ from os import path, makedirs
 import matplotlib.pyplot as plt
 
 
-def dataset_entity_visualize(entity_data, normalized=False, unit=2, base_dir="./misc/extern/test/"):
+def dataset_entity_visualize(entity_data, normalized=False, unit=2, base_dir="./misc/extern/test/", save_prefix=""):
     makedirs(base_dir, exist_ok=True)
     clips = entity_data['clips']
     comp = entity_data['comp']
@@ -16,5 +16,5 @@ def dataset_entity_visualize(entity_data, normalized=False, unit=2, base_dir="./
         plt.subplot(num_clips, 1, i+1)
         plt.gca().axis('off')
         plt.imshow(clip.permute(2, 0, 3, 1).flatten(1, 2).numpy())
-    plt.savefig(path.join(base_dir, f"{idx}.jpg"))
+    plt.savefig(path.join(base_dir, f"{save_prefix}{idx}.jpg"))
     plt.close()
