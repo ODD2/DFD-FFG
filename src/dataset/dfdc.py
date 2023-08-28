@@ -221,9 +221,9 @@ class DFDC(DeepFakeDataset):
 
 class DFDCDataModule(DeepFakeDataModule):
     def __init__(
-            self,
-            *args,
-            **kargs
+        self,
+        *args,
+        **kargs
     ):
         super().__init__(*args, **kargs)
 
@@ -241,10 +241,7 @@ class DFDCDataModule(DeepFakeDataModule):
             transform=self.transform,
         )
 
-        if stage == "fit":
-            self._train_dataset = None
-
-        elif stage == "validate" or stage == "test":
+        if (type(self._val_dataset) == type(self._test_dataset) == type(None)):
             self._val_dataset = self._test_dataset = data_cls(
                 split="test",
                 pack=self.pack
@@ -260,7 +257,7 @@ if __name__ == "__main__":
     dtm = DFDCDataModule(
         data_dir="datasets/dfdc/",
         batch_size=24,
-        num_workers=0,
+        num_workers=16,
         pack=True
     )
 
@@ -272,19 +269,17 @@ if __name__ == "__main__":
     dtm.setup("validate")
     dtm.setup("test")
 
-    # iterate the whole dataset for visualization and sanity check
-    for split, iterable in {
-        'test': dtm._test_dataset
-    }.items():
-        save_folder = f"./misc/extern/dump_dataset/dfdc/{split}/"
-        # entity dump
-        for entity_idx in tqdm(range(len(iterable))):
-            # if (entity_idx > 100):
-            #     break
-            dataset_entity_visualize(iterable.get_entity(entity_idx, with_entity_info=True), base_dir=save_folder)
+    # # iterate the whole dataset for visualization and sanity check
+    # iterable = dtm._test_dataset
+    # save_folder = f"./misc/extern/dump_dataset/dfdc/test/"
+    # # entity dump
+    # for entity_idx in tqdm(range(len(iterable))):
+    #     if (entity_idx > 100):
+    #         break
+    #     dataset_entity_visualize(iterable.get_entity(entity_idx, with_entity_info=True), base_dir=save_folder)
 
     # iterate the all dataloaders for debugging.
-    # for fn in [dtm.val_dataloader, dtm.test_dataloader]:
-    #     iterable = fn()
-    #     for batch in tqdm(iterable):
-    #         pass
+    for fn in [dtm.val_dataloader, dtm.test_dataloader]:
+        iterable = fn()
+        for batch in tqdm(iterable):
+            pass

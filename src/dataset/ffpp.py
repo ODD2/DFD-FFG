@@ -655,7 +655,7 @@ class FFPPDataModule(DeepFakeDataModule):
     def prepare_data(self):
         FFPP.prepare_data(self.data_dir, self.compressions, self.vid_ext)
 
-    def setup(self, stage: str):
+    def setup(self, stage: str, with_val=True):
         # Assign train/val datasets for use in dataloaders
         data_cls = partial(
             FFPP,
@@ -677,8 +677,6 @@ class FFPPDataModule(DeepFakeDataModule):
                 strategy=self.strategy,
                 augmentation=self.augmentations
             )
-
-        elif stage == "validate":
             self._val_dataset = data_cls(
                 split="val",
                 pack=self.pack,
@@ -705,8 +703,8 @@ if __name__ == "__main__":
         ["REAL", "DF", "FS", "F2F", "NT"],
         ["c23"],
         data_dir="datasets/ffpp/",
-        batch_size=24,
-        num_workers=16,
+        batch_size=1,
+        num_workers=0,
         force_random_speed=False,
         strategy=FFPPSampleStrategy.NORMAL,
         augmentations=(

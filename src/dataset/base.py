@@ -88,6 +88,10 @@ class DeepFakeDataset(Dataset):
                     logging.error(f"Error Occur During Video Table Creation: {f.path}")
         return video_metas
 
+    @property
+    def cls_name(self):
+        return self.__class__.__name__
+
     def __init__(
         self,
         data_dir: str,
@@ -156,19 +160,19 @@ class DeepFakeDataset(Dataset):
 
         assert clips.shape[0] == masks.shape[0] == label.shape[0] == index.shape[0]
 
-        return [clips, label, masks, index]
+        return [clips, label, masks, index, self.cls_name]
 
 
 class DeepFakeDataModule(pl.LightningDataModule):
     def __init__(
-            self,
-            data_dir: str,
-            batch_size: int = 24,
-            num_workers: int = 8,
-            vid_ext: str = ".avi",
-            clip_duration: int = 4,
-            num_frames: int = 10,
-            pack: bool = False
+        self,
+        data_dir: str,
+        batch_size: int = 24,
+        num_workers: int = 8,
+        vid_ext: str = ".avi",
+        clip_duration: int = 4,
+        num_frames: int = 10,
+        pack: bool = False
     ):
         super().__init__()
         # generic parameters
@@ -215,10 +219,76 @@ class DeepFakeDataModule(pl.LightningDataModule):
         return self.create_dataloader(self._train_dataset, shuffle=True)
 
     def val_dataloader(self):
-        return self.create_dataloader(self._val_dataset)
+        return self.create_dataloader(self._val_dataset, shuffle=True)
 
     def test_dataloader(self):
         return self.create_dataloader(self._test_dataset)
 
     def predict_dataloader(self):
         return self.create_dataloader(self._predict_dataset)
+
+
+class ODDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        train_datamodule: pl.LightningDataModule,
+        val_datamodules: List[pl.LightningDataModule] = [],
+        test_datamodules: List[pl.LightningDataModule] = []
+    ):
+        super().__init__()
+        self._train_datamodule = train_datamodule
+        self._test_datamodules = test_datamodules
+        self._val_datamodules = val_datamodules
+
+    def affine_model(self, model):
+        for dtm in [
+            self._train_datamodule,
+            *self._test_datamodules,
+            *self._val_datamodules
+        ]:
+            dtm.affine_model(model)
+
+    def prepare_data(self):
+        for dtm in [
+            self._train_datamodule,
+            *self._test_datamodules,
+            *self._val_datamodules
+        ]:
+            dtm.prepare_data()
+
+    def setup(self, stage: str):
+        if stage == "fit":
+            self._train_datamodule.setup('fit')
+            for dtm in self._val_datamodules:
+                dtm.setup('fit')
+
+        if stage == "test":
+            for dtm in self._test_datamodules:
+                dtm.setup('test')
+
+    def train_dataloader(self):
+        dataloaders = self._train_datamodule.train_dataloader()
+        return dataloaders
+
+    def val_dataloader(self):
+        dataloaders = {
+            dtm._val_dataset.cls_name:
+            dtm.val_dataloader()
+            for dtm in [
+                self._train_datamodule,
+                *self._val_datamodules
+            ]
+        }
+        return dataloaders
+
+    def test_dataloader(self):
+        dataloaders = {
+            dtm._test_dataset.cls_name:
+            dtm.test_dataloader()
+            for dtm in
+            self._test_datamodules
+        }
+        return dataloaders
+
+    def predict_dataloader(self):
+        raise NotImplementedError()

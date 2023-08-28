@@ -5,24 +5,51 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
             "name": "Python: Main",
             "type": "python",
             "request": "launch",
             "module": "main",
             "justMyCode": false,
             "args": [
-                "--config=test.yaml"
+                "--config",
+                "configs/base.yaml"
             ]
         },
         {
-            "name": "Python: CLI Main",
+            "name": "Python: Test",
             "type": "python",
             "request": "launch",
-            "module": "climain",
-            "justMyCode": false,
-            "args": [
-                "--config=test.yaml"
-            ]
-        }
+            "module": "test",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: FFPPDataModule",
+            "type": "python",
+            "request": "launch",
+            "module": "src.dataset.ffpp",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: CDFDataModule",
+            "type": "python",
+            "request": "launch",
+            "module": "src.dataset.cdf",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: DFDCDataModule",
+            "type": "python",
+            "request": "launch",
+            "module": "src.dataset.dfdc",
+            "justMyCode": false
+        },
     ]
 }
