@@ -4,7 +4,7 @@
 # Install torch with pip rather conda, due to: https://github.com/pytorch/pytorch/issues/102269
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
 # Install other dependencies
-pip install lightning opencv-python-headless albumentations matplotlib ftfy regex lightning[pytorch-extra] pandas
+pip install lightning opencv-python-headless albumentations matplotlib ftfy regex lightning[pytorch-extra] pandas wandb
 ```
 ## Torchvision from source
 ```shell
