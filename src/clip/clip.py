@@ -73,15 +73,27 @@ def _download(url: str, root: str):
 
 
 def _convert_image_to_rgb(image):
-    return image.convert("RGB")
+    if (isinstance(image, Image.Image)):
+        return image.convert("RGB")
+    else:
+        return image
+
+
+def _to_tensor(image):
+    if (isinstance(image, torch.Tensor)):
+        if (image.max() > 1):
+            image = image / 255
+        return image
+    else:
+        return ToTensor()(image)
 
 
 def _transform(n_px):
     return Compose([
-        Resize(n_px, interpolation=BICUBIC),
+        Resize(n_px, interpolation=BICUBIC, antialias=True),
         CenterCrop(n_px),
         _convert_image_to_rgb,
-        ToTensor(),
+        _to_tensor,
         Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
     ])
 
@@ -147,7 +159,7 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
 
     def _node_get(node: torch._C.Node, key: str):
         """Gets attributes of a node which is polymorphic over return type.
-        
+
         From https://github.com/pytorch/pytorch/pull/82628
         """
         sel = node.kindOf(key)
