@@ -25,6 +25,7 @@ class ODClassifier(pl.LightningModule):
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         raise NotImplementedError()
 
+    # TODO: isolate optimizer and lr_scheduler configurations
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=1e-3)
+        optimizer = optim.AdamW(self.parameters(), lr=1e-5)
         return optimizer
