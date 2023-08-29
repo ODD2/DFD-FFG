@@ -1,0 +1,58 @@
+import os
+import lightning as pl
+
+from typing import Optional
+from lightning.fabric.utilities.types import _PATH
+from lightning.pytorch.trainer.trainer import Trainer
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
+
+
+class ODTrainer(Trainer):
+    # rewrite the log_dir property to sync with logger configurations.
+    @property
+    def log_dir(self) -> Optional[str]:
+        """The directory for the current experiment. Use this to save images to, etc...
+
+        .. note:: You must call this on all processes. Failing to do so will cause your program to stall forever.
+
+         .. code-block:: python
+
+             def training_step(self, batch, batch_idx):
+                 img = ...
+                 save_img(img, self.trainer.log_dir)
+        """
+        if len(self.loggers) > 0:
+            if not isinstance(self.loggers[0], TensorBoardLogger):
+                dirpath = self.loggers[0].save_dir
+            else:
+                dirpath = self.loggers[0].log_dir
+            name = self.loggers[0].name
+            version = self.loggers[0].version
+            version = version if isinstance(version, str) else f"version_{version}"
+            dirpath = os.path.join(dirpath, str(name), version)
+        else:
+            dirpath = self.default_root_dir
+
+        dirpath = self.strategy.broadcast(dirpath)
+        return dirpath
+
+
+class ODModelCheckpoint(ModelCheckpoint):
+    # force overwrite the name mangling for checkpoint directory resolution to sync with the trainer's log directory.
+    def _ModelCheckpoint__resolve_ckpt_dir(self, trainer: "pl.Trainer") -> _PATH:
+        """Determines model checkpoint save directory at runtime. Reference attributes from the trainer's logger to
+        determine where to save checkpoints. The path for saving weights is set in this priority:
+
+        1.  The ``ModelCheckpoint``'s ``dirpath`` if passed in
+        2.  The ``Logger``'s ``log_dir`` if the trainer has loggers
+        3.  The ``Trainer``'s ``default_root_dir`` if the trainer has no loggers
+
+        The path gets extended with subdirectory "checkpoints".
+
+        """
+        if self.dirpath is not None:
+            # short circuit if dirpath was passed to ModelCheckpoint
+            return self.dirpath
+
+        return os.path.join(trainer.log_dir, "checkpoints")

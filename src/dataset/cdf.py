@@ -254,7 +254,7 @@ class CDFDataModule(DeepFakeDataModule):
 
 
 if __name__ == "__main__":
-    from src.utility.od.visualize import dataset_entity_visualize
+    from utility.visualize import dataset_entity_visualize
 
     class Dummy():
         pass

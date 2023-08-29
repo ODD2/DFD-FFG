@@ -92,7 +92,11 @@ data:
         df_types: ['REAL','DF','FS','F2F','NT']
         compressions: ['c23']
         strategy: CONTRAST_RAND
-        augmentations: NONE
+        augmentations:
+        - NORMAL
+        - VIDEO
+        - VIDEO_RRC
+        - FRAME
         force_random_speed: null
         data_dir: 'datasets/ffpp'
         batch_size: 12
@@ -126,7 +130,8 @@ data:
         df_types: ['REAL','DF','FS','F2F','NT']
         compressions: ['c23']
         strategy: NORMAL
-        augmentations: NONE
+        augmentations: 
+        - NONE
         force_random_speed: null
         data_dir: 'datasets/ffpp/'
         batch_size: 24

@@ -630,7 +630,7 @@ class FFPPDataModule(DeepFakeDataModule):
             df_types: List[str] = [],
             compressions: List[str] = [],
             strategy: FFPPSampleStrategy = FFPPSampleStrategy.NORMAL,
-            augmentations: FFPPAugmentation = FFPPAugmentation.NONE,
+            augmentations: List[FFPPAugmentation] = [FFPPAugmentation.NONE],
             force_random_speed: bool = None,
             *args, **kargs
 
@@ -645,7 +645,7 @@ class FFPPDataModule(DeepFakeDataModule):
             reverse=True
         )
         self.strategy = strategy
-        self.augmentations = augmentations
+        self.augmentations = FFPPAugmentation(sum(augmentations))
         self.force_random_speed = force_random_speed
 
     def affine_model(self, model):
@@ -694,7 +694,7 @@ class FFPPDataModule(DeepFakeDataModule):
 
 
 if __name__ == "__main__":
-    from src.utility.od.visualize import dataset_entity_visualize
+    from utility.visualize import dataset_entity_visualize
 
     class Dummy():
         pass
@@ -707,12 +707,12 @@ if __name__ == "__main__":
         num_workers=0,
         force_random_speed=False,
         strategy=FFPPSampleStrategy.NORMAL,
-        augmentations=(
-            FFPPAugmentation.NORMAL |
-            FFPPAugmentation.VIDEO |
-            FFPPAugmentation.VIDEO_RRC |
+        augmentations=[
+            FFPPAugmentation.NORMAL,
+            FFPPAugmentation.VIDEO,
+            FFPPAugmentation.VIDEO_RRC,
             FFPPAugmentation.FRAME
-        ),
+        ],
         pack=False,
     )
 

@@ -5,21 +5,22 @@ import logging
 import warnings
 import lightning.pytorch as pl
 
+from typing import Optional
 from torch import optim, nn
 from functools import partial
 
 
-from lightning.pytorch.cli import LightningCLI
-from lightning.pytorch.loggers.wandb import WandbLogger
 from lightning.pytorch.trainer.trainer import Trainer
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-
+from lightning.pytorch.loggers.wandb import WandbLogger
+from lightning.pytorch.cli import LightningCLI, SaveConfigCallback
+from lightning.pytorch.callbacks import EarlyStopping
 
 from src.model.clip import CLIPLinearProbe
 from src.dataset.base import ODDataModule
 from src.dataset.ffpp import FFPPDataModule
 from src.dataset.cdf import CDFDataModule
 from src.dataset.dfdc import DFDCDataModule
+from src.utility.builtin import ODTrainer, ODModelCheckpoint
 
 torch.set_float32_matmul_precision('high')
 
@@ -32,7 +33,7 @@ class ODLightningCLI(LightningCLI):
                 "early_stop.patience": 10,
             }
         )
-        parser.add_lightning_class_args(ModelCheckpoint, "checkpoint")
+        parser.add_lightning_class_args(ODModelCheckpoint, "checkpoint")
         parser.set_defaults(
             {
                 'checkpoint.save_last': True,
@@ -57,22 +58,38 @@ def configure_logging():
 
 
 def cli_main():
+    # logging configuration
     configure_logging()
 
+    # initialize cli
     cli = ODLightningCLI(
         run=False,
-        save_config_callback=None,
+        trainer_class=ODTrainer,
+        save_config_kwargs={
+            'config_filename': 'setting.yaml'
+        },
         auto_configure_optimizers=False,
         seed_everything_default=1019
     )
 
-    # Load datasets
-    cli.datamodule.affine_model(cli.model)
+    # monitor model gradient and parameter histograms
     cli.trainer.logger.experiment.watch(cli.model, "all")
 
+    # Load datasets
+    cli.datamodule.affine_model(cli.model)
+
+    # run
     cli.trainer.fit(cli.model, datamodule=cli.datamodule)
     cli.trainer.test(cli.model, datamodule=cli.datamodule)
 
+    # save the running config
+    cli.trainer.logger.experiment.save(
+        glob_str=os.path.join(cli.trainer.log_dir, 'setting.yaml'),
+        base_path=cli.trainer.log_dir,
+        policy="now"
+    )
+
+    # ending
     cli.trainer.logger.experiment.unwatch(cli.model)
     cli.trainer.logger.experiment.finish()
 
