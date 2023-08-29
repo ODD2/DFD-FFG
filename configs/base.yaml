@@ -80,9 +80,7 @@ checkpoint:
   every_n_epochs: null
   save_on_train_epoch_end: null
 model:
-  class_path: src.model.clip.CLIPLinearProbe
-  init_args:
-    output_dim: 2
+  class_path: src.model.clip.CLIPBinaryLinearProb
 data:
   class_path: src.dataset.base.ODDataModule
   init_args:
