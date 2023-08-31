@@ -20,26 +20,9 @@ from src.dataset.base import ODDataModule
 from src.dataset.ffpp import FFPPDataModule
 from src.dataset.cdf import CDFDataModule
 from src.dataset.dfdc import DFDCDataModule
-from src.utility.builtin import ODTrainer, ODModelCheckpoint
+from src.utility.builtin import ODTrainer, ODModelCheckpoint, ODLightningCLI
 
 torch.set_float32_matmul_precision('high')
-
-
-class ODLightningCLI(LightningCLI):
-    def add_arguments_to_parser(self, parser):
-        parser.add_lightning_class_args(EarlyStopping, "early_stop")
-        parser.set_defaults(
-            {
-                "early_stop.patience": 10,
-            }
-        )
-        parser.add_lightning_class_args(ODModelCheckpoint, "checkpoint")
-        parser.set_defaults(
-            {
-                'checkpoint.save_last': True,
-                'checkpoint.save_top_k': 1,
-            }
-        )
 
 
 def configure_logging():
@@ -67,6 +50,9 @@ def cli_main():
         trainer_class=ODTrainer,
         save_config_kwargs={
             'config_filename': 'setting.yaml'
+        },
+        parser_kwargs={
+            "parser_mode": "omegaconf"
         },
         auto_configure_optimizers=False,
         seed_everything_default=1019

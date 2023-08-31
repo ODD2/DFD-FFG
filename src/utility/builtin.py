@@ -6,6 +6,25 @@ from lightning.fabric.utilities.types import _PATH
 from lightning.pytorch.trainer.trainer import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
+from lightning.pytorch.cli import LightningCLI, SaveConfigCallback
+from lightning.pytorch.callbacks import EarlyStopping
+
+
+class ODLightningCLI(LightningCLI):
+    def add_arguments_to_parser(self, parser):
+        parser.add_lightning_class_args(EarlyStopping, "early_stop")
+        parser.set_defaults(
+            {
+                "early_stop.patience": 10,
+            }
+        )
+        parser.add_lightning_class_args(ODModelCheckpoint, "checkpoint")
+        parser.set_defaults(
+            {
+                'checkpoint.save_last': True,
+                'checkpoint.save_top_k': 1,
+            }
+        )
 
 
 class ODTrainer(Trainer):
