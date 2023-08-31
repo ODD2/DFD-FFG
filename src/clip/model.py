@@ -168,11 +168,69 @@ class QuickGELU(nn.Module):
         return x * torch.sigmoid(1.702 * x)
 
 
+class MultiheadAttentionAttrExtract(nn.Module):
+    '''
+    Simple reimplementation of nn.MultiheadAttention with key, value return
+    '''
+
+    def __init__(self, embed_dim, n_head, attn_record=False):
+        super().__init__()
+
+        self.in_proj_weight = nn.Parameter(torch.empty((3 * embed_dim, embed_dim)))
+        self.in_proj_bias = nn.Parameter(torch.empty(3 * embed_dim))
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
+
+        self.n_head = n_head
+        self.attr = {}
+
+        # recordings
+        self.attn_record = attn_record
+        self.aff = None
+
+    def pop_attr(self):
+        if (not self.attr):
+            return None
+        ret = self.get_attr()
+        self.attr.clear()
+        return ret
+
+    def get_attr(self):
+        return {k: self.attr[k] for k in self.attr}
+
+    def set_attr(self, q, k, v, out):
+        self.attr = dict(q=q, k=k, v=v, out=out)
+
+    def forward(self, x):
+        self.pop_attr()
+        q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
+
+        view_as = (*q.shape[:2], self.n_head, -1)
+        q = q.view(*view_as)
+        k = k.view(*view_as)
+        v = v.view(*view_as)
+
+        aff = torch.einsum('nqhc,nkhc->nqkh', q / (q.size(-1) ** 0.5), k)
+        aff = aff.softmax(dim=-2)
+        mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
+
+        out = self.out_proj(mix.flatten(-2))
+        self.set_attr(q, k, v, out)
+
+        if self.attn_record:
+            self.aff = aff
+
+        return out
+
+
 class ResidualAttentionBlock(nn.Module):
     def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None):
         super().__init__()
+        # origin
+        # self.attn = nn.MultiheadAttention(d_model, n_head)
 
-        self.attn = nn.MultiheadAttention(d_model, n_head)
+        # modified
+        self.attn = MultiheadAttentionAttrExtract(d_model, n_head)
+
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(OrderedDict([
             ("c_fc", nn.Linear(d_model, d_model * 4)),
@@ -183,8 +241,12 @@ class ResidualAttentionBlock(nn.Module):
         self.attn_mask = attn_mask
 
     def attention(self, x: torch.Tensor):
-        self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
-        return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
+        # origin
+        # self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
+        # return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
+
+        # modified
+        return self.attn(x)
 
     def forward(self, x: torch.Tensor):
         x = x + self.attention(self.ln_1(x))
@@ -224,7 +286,20 @@ class VisionTransformer(nn.Module):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
-        x = torch.cat([self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), x], dim=1)  # shape = [*, grid ** 2 + 1, width]
+        x = torch.cat(
+            [
+                self.class_embedding.to(x.dtype) +
+                torch.zeros(
+                    x.shape[0],
+                    1,
+                    x.shape[-1],
+                    dtype=x.dtype,
+                    device=x.device
+                ),
+                x
+            ],
+            dim=1
+        )  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
         x = self.ln_pre(x)
 
@@ -401,12 +476,24 @@ def build_model(state_dict: dict):
 
     if vit:
         vision_width = state_dict["visual.conv1.weight"].shape[0]
-        vision_layers = len([k for k in state_dict.keys() if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")])
+        vision_layers = len(
+            [
+                k for k in state_dict.keys()
+                if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")
+            ]
+        )
         vision_patch_size = state_dict["visual.conv1.weight"].shape[-1]
         grid_size = round((state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
         image_resolution = vision_patch_size * grid_size
     else:
-        counts: list = [len(set(k.split(".")[2] for k in state_dict if k.startswith(f"visual.layer{b}"))) for b in [1, 2, 3, 4]]
+        counts: list = [
+            len(
+                set(k.split(".")[2]
+                    for k in state_dict
+                    if k.startswith(f"visual.layer{b}"))
+            )
+            for b in [1, 2, 3, 4]
+        ]
         vision_layers = tuple(counts)
         vision_width = state_dict["visual.layer1.0.conv1.weight"].shape[0]
         output_width = round((state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)
