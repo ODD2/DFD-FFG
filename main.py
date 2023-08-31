@@ -73,7 +73,7 @@ def cli_main():
     )
 
     # monitor model gradient and parameter histograms
-    cli.trainer.logger.experiment.watch(cli.model, log="all")
+    cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False)
 
     # Load datasets
     cli.datamodule.affine_model(cli.model)

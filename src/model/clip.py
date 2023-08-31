@@ -12,7 +12,7 @@ class LinearProbe(nn.Module):
         super().__init__()
         self.model, self.transform = CLIP.load(architecture)
         self.model = self.model.float()
-        self.linear = nn.Linear(self.model.visual.output_dim, output_dim, bias=False)
+        self.linear = nn.Linear(self.model.visual.output_dim, output_dim, bias=True)
         # disable gradients
         for params in self.model.parameters():
             params.requires_grad_(False)
