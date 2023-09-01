@@ -202,6 +202,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
 
     def forward(self, x):
         self.pop_attr()
+        x = x.transpose(0, 1)
         q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
 
         view_as = (*q.shape[:2], self.n_head, -1)
@@ -218,7 +219,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
 
         if self.attn_record:
             self.aff = aff
-
+        out = out.transpose(0, 1)
         return out
 
 
@@ -258,6 +259,7 @@ class Transformer(nn.Module):
     def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None):
         super().__init__()
         self.width = width
+        self.heads = heads
         self.layers = layers
         self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
 

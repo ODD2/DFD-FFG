@@ -1,26 +1,10 @@
 import os
-import wandb
 import torch
 import logging
 import warnings
 import lightning.pytorch as pl
 
-from typing import Optional
-from torch import optim, nn
-from functools import partial
-
-
-from lightning.pytorch.trainer.trainer import Trainer
-from lightning.pytorch.loggers.wandb import WandbLogger
-from lightning.pytorch.cli import LightningCLI, SaveConfigCallback
-from lightning.pytorch.callbacks import EarlyStopping
-
-from src.model.clip import CLIPLinearProbe
-from src.dataset.base import ODDataModule
-from src.dataset.ffpp import FFPPDataModule
-from src.dataset.cdf import CDFDataModule
-from src.dataset.dfdc import DFDCDataModule
-from src.utility.builtin import ODTrainer, ODModelCheckpoint, ODLightningCLI
+from src.utility.builtin import ODTrainer,  ODLightningCLI
 
 torch.set_float32_matmul_precision('high')
 
@@ -40,12 +24,8 @@ def configure_logging():
     # logging.basicConfig(level="DEBUG", format=logging_fmt)
 
 
-def cli_main():
-    # logging configuration
-    configure_logging()
-
-    # initialize cli
-    cli = ODLightningCLI(
+def configure_cli():
+    return ODLightningCLI(
         run=False,
         trainer_class=ODTrainer,
         save_config_kwargs={
@@ -57,6 +37,14 @@ def cli_main():
         auto_configure_optimizers=False,
         seed_everything_default=1019
     )
+
+
+def cli_main():
+    # logging configuration
+    configure_logging()
+
+    # initialize cli
+    cli = configure_cli()
 
     # monitor model gradient and parameter histograms
     cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False)

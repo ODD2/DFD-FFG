@@ -4,7 +4,6 @@ import src.clip as CLIP
 
 from functools import partial
 from src.model.base import ODClassifier, ODBinaryMetricClassifier
-from torchmetrics.classification import AUROC, Accuracy
 
 
 class LinearProbe(nn.Module):
@@ -17,7 +16,7 @@ class LinearProbe(nn.Module):
         for params in self.model.parameters():
             params.requires_grad_(False)
 
-    def forward(self, x):
+    def forward(self, x, *args, **kargs):
         if len(x.shape) > 4:
             b, t = x.shape[0:2]
             logits = self.linear(self.model.encode_image(x.flatten(0, 1))).unflatten(0, (b, t)).mean(dim=1)

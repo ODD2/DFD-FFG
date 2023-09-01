@@ -6,7 +6,7 @@ from functools import partial
 from torchvision.datasets import MNIST
 from torch.utils.data import random_split, DataLoader
 
-from model.clip import LinearProbe
+from model.clip.lprobe import LinearProbe
 
 
 # define the LightningModule
