@@ -1,0 +1,37 @@
+data:
+  class_path: src.dataset.base.ODDataModule
+  init_args:
+    test_datamodules:
+    - class_path: src.dataset.ffpp.FFPPDataModule
+      init_args:
+        df_types: ['REAL','DF','FS','F2F','NT']
+        compressions: ['c23']
+        strategy: NORMAL
+        augmentations: 
+        - NONE
+        force_random_speed: null
+        data_dir: 'datasets/ffpp/'
+        batch_size: 1
+        num_workers: 16
+        vid_ext: .avi
+        clip_duration: 4
+        num_frames: 10
+        pack: true
+    - class_path: src.dataset.cdf.CDFDataModule
+      init_args:
+        data_dir: 'datasets/cdf/'
+        batch_size: 1
+        num_workers: 16
+        vid_ext: .avi
+        clip_duration: 4
+        num_frames: 10
+        pack: true
+    - class_path: src.dataset.dfdc.DFDCDataModule
+      init_args:
+        data_dir: 'datasets/dfdc/'
+        batch_size: 1
+        num_workers: 16
+        vid_ext: .avi
+        clip_duration: 4
+        num_frames: 10
+        pack: true

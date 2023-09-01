@@ -21,8 +21,8 @@ class ODClassifier(pl.LightningModule):
         raise NotImplementedError()
 
     def training_step(self, batch, batch_idx):
-        result = self.shared_step(batch, 'train')
-        return result['loss']
+        results = [self.shared_step(batch[dts_name], 'train') for dts_name in batch]
+        return sum([_results['loss'] for _results in results])
 
     def test_step(self, batch, batch_idx, dataloader_idx=0):
         result = self.shared_step(batch, 'test')
@@ -33,7 +33,7 @@ class ODClassifier(pl.LightningModule):
         return result['loss']
 
     def shared_step(self, batch, stage):
-        x, y, mask, dts_name = *batch[:3], batch[-1]
+        x, y, mask, indices, dts_name = *batch[:3], *batch[-2:]
         x = self.model(x, mask)
         loss = nn.functional.cross_entropy(x, y)
         self.log(
@@ -45,8 +45,12 @@ class ODClassifier(pl.LightningModule):
             "logits": x,
             "labels": y,
             "loss": loss,
-            "dts_name": dts_name
+            "dts_name": dts_name,
+            "indices": indices
         }
+
+    def evaluate(self, batch, pack=True):
+        return self.shared_step(batch, 'eval')
 
     # TODO: isolate optimizer and lr_scheduler configurations
     def configure_optimizers(self):
@@ -76,7 +80,7 @@ class ODBinaryMetricClassifier(ODClassifier):
     # shared procedures
     def shared_metric_update_procedure(self, result):
         # save metrics
-        logits = result['logits'].detach().cpu()
+        logits = result['logits'].detach().cpu().softmax(dim=-1)
         labels = result['labels'].detach().cpu()
         self.get_metric(result['dts_name'], 'auc').update(logits[:, 1], labels)
         self.get_metric(result['dts_name'], 'acc').update(logits[:, 1], labels)

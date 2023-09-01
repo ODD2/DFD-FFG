@@ -20,7 +20,24 @@
             "justMyCode": false,
             "args": [
                 "--config",
-                "configs/base.yaml"
+                "configs/base.yaml",
+                "--config",
+                "configs/test.yaml",
+                "--config",
+                "configs/model/clip_snvl.yaml"
+            ]
+        },
+        {
+            "name": "Python: Inference",
+            "type": "python",
+            "request": "launch",
+            "module": "inference",
+            "justMyCode": false,
+            "args": [
+                // "--config",
+                "logs/DFD-FFG/4dbhl3kn/setting.yaml",
+                "configs/inference.yaml",
+                "logs/DFD-FFG/4dbhl3kn/checkpoints/epoch=4-step=2400.ckpt"
             ]
         },
         {

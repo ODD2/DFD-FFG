@@ -231,18 +231,18 @@ class DeepFakeDataModule(pl.LightningDataModule):
 class ODDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        train_datamodule: pl.LightningDataModule,
+        train_datamodules: List[pl.LightningDataModule] = [],
         val_datamodules: List[pl.LightningDataModule] = [],
         test_datamodules: List[pl.LightningDataModule] = []
     ):
         super().__init__()
-        self._train_datamodule = train_datamodule
+        self._train_datamodules = train_datamodules
         self._test_datamodules = test_datamodules
         self._val_datamodules = val_datamodules
 
     def affine_model(self, model):
         for dtm in [
-            self._train_datamodule,
+            *self._train_datamodules,
             *self._test_datamodules,
             *self._val_datamodules
         ]:
@@ -250,7 +250,7 @@ class ODDataModule(pl.LightningDataModule):
 
     def prepare_data(self):
         for dtm in [
-            self._train_datamodule,
+            *self._train_datamodules,
             *self._test_datamodules,
             *self._val_datamodules
         ]:
@@ -258,8 +258,10 @@ class ODDataModule(pl.LightningDataModule):
 
     def setup(self, stage: str):
         if stage == "fit":
-            self._train_datamodule.setup('fit')
-            for dtm in self._val_datamodules:
+            for dtm in [
+                *self._train_datamodules,
+                *self._val_datamodules
+            ]:
                 dtm.setup('fit')
 
         if stage == "test":
@@ -270,7 +272,11 @@ class ODDataModule(pl.LightningDataModule):
                 dtm.setup('test')
 
     def train_dataloader(self):
-        dataloaders = self._train_datamodule.train_dataloader()
+        dataloaders = {
+            dtm._train_dataset.cls_name:
+            dtm.train_dataloader()
+            for dtm in self._train_datamodules
+        }
         return dataloaders
 
     def val_dataloader(self):
@@ -278,7 +284,7 @@ class ODDataModule(pl.LightningDataModule):
             dtm._val_dataset.cls_name:
             dtm.val_dataloader()
             for dtm in [
-                self._train_datamodule,
+                *self._train_datamodules,
                 *self._val_datamodules
             ]
         }

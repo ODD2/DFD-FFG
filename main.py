@@ -53,8 +53,16 @@ def cli_main():
     cli.datamodule.affine_model(cli.model)
 
     # run
-    cli.trainer.fit(cli.model, datamodule=cli.datamodule)
-    cli.trainer.test(cli.model, datamodule=cli.datamodule, verbose=False)
+    cli.trainer.fit(
+        cli.model,
+        datamodule=cli.datamodule
+    )
+    cli.trainer.test(
+        cli.model,
+        datamodule=cli.datamodule,
+        verbose=False,
+        ckpt_path="best"
+    )
 
     # save the running config
     cli.trainer.logger.experiment.save(

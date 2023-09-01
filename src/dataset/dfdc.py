@@ -216,7 +216,7 @@ class DFDC(DeepFakeDataset):
 
     def video_meta(self, idx):
         df_type, name = self.video_info(idx)[1:3]
-        return self.video_table[df_type][name]
+        return self.video_table[name]
 
 
 class DFDCDataModule(DeepFakeDataModule):
