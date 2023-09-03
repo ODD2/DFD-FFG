@@ -2,3 +2,16 @@ trainer:
   logger:
     init_args:
       offline: true
+data:
+  init_args:
+    train_datamodules:
+    - init_args:
+        batch_size: 2
+    val_datamodules:
+    - init_args:
+        batch_size: 2
+    - init_args:
+        batch_size: 2
+    test_datamodules:
+    - init_args:
+        batch_size: 2

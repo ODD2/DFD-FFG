@@ -1,5 +1,6 @@
-import logging
 import torch
+import pickle
+import logging
 import torch.nn as nn
 import src.clip as CLIP
 
@@ -256,7 +257,10 @@ class ViTSideNetworkVideoLearner(nn.Module):
 
         x = layer_logits.mean(dim=2)
 
-        return self.cls_proj(x[:, -1].squeeze(1))
+        return {
+            "probs": self.cls_proj(x[:, -1].squeeze(1)),
+            "qs": layer_qs
+        }
 
 
 class CLIPVideoAttrExtractor(nn.Module):
@@ -266,17 +270,31 @@ class CLIPVideoAttrExtractor(nn.Module):
         self.model = self.model.visual.float()
         self.model.requires_grad_(False)
 
+    @property
+    def n_px(self):
+        return self.model.input_resolution
+
+    @property
+    def n_patch(self):
+        return self.model.input_resolution // self.model.patch_size
+
     def forward(self, x):
-        b, t = x.shape[0:2]
         # pass throught for attributes
-        self.model(x.flatten(0, 1))
+        if (len(x.shape) > 4):
+            b, t = x.shape[:2]
+            self.model(x.flatten(0, 1))
+        else:
+            self.model(x)
         # retrieve all layer attributes
         layer_attrs = []
         for blk in self.model.transformer.resblocks:
             attrs = blk.attn.pop_attr()
             # restore temporal dimension
             for attr_name in attrs:
-                attrs[attr_name] = attrs[attr_name].unflatten(0, (b, t))
+                if (len(x.shape) > 4):
+                    attrs[attr_name] = attrs[attr_name].unflatten(0, (b, t))
+                else:
+                    attrs[attr_name] = attrs[attr_name]
             layer_attrs.append(attrs)
         return layer_attrs
 
@@ -347,3 +365,64 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
     @property
     def n_px(self):
         return self.model.n_px
+
+    def shared_step(self, batch, stage):
+        x, y, mask, indices, dts_name = *batch[:3], *batch[-2:]
+        output = self.model(x, mask)
+        logits = output["probs"]
+        # classification loss
+        cls_loss = nn.functional.cross_entropy(logits, y)
+        self.log(
+            f"{stage}/{dts_name}/loss",
+            cls_loss,
+            batch_size=logits.shape[0]
+        )
+
+        return {
+            "logits": logits,
+            "labels": y,
+            "loss": cls_loss,
+            "dts_name": dts_name,
+            "indices": indices,
+            "output": output
+        }
+
+
+class CLIPBinaryVideoLearnerFFG(CLIPBinaryVideoLearner):
+    def __init__(self, face_parts: List[str], face_attn_attr: str, face_feature_path: str, *args, **kargs):
+        super().__init__(*args, **kargs)
+        self.save_hyperparameters()
+        with open(face_feature_path, "rb") as f:
+            _face_features = pickle.load(f)
+            self.face_features = torch.stack(
+                [
+                    torch.stack([
+                        _face_features[face_attn_attr][p][l]
+                        for p in face_parts
+                    ])
+                    for l in self.model.decoder.layer_indices
+                ]
+            )
+
+    def shared_step(self, batch, stage):
+        result = super().shared_step(batch, stage)
+        if (stage == "train"):
+            dts_name = result["dts_name"]
+            # face feature guided loss
+            qs = result["output"]["qs"]
+            cls_sim = torch.mean(
+                (
+                    1 - torch.nn.functional.cosine_similarity(
+                        qs.flatten(2, 3),
+                        self.face_features.repeat((1, qs.shape[2], 1)).to(qs.device),
+                        dim=-1
+                    )
+                ) / 2
+            )
+            self.log(
+                f"{stage}/{dts_name}/cls_sim",
+                cls_sim,
+                batch_size=result["logits"].shape[0]
+            )
+            result["loss"] += cls_sim
+        return result

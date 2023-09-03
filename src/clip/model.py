@@ -271,6 +271,7 @@ class VisionTransformer(nn.Module):
     def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int):
         super().__init__()
         self.input_resolution = input_resolution
+        self.patch_size = patch_size
         self.output_dim = output_dim
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
 
