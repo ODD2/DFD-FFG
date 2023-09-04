@@ -249,7 +249,7 @@ class DFDCDataModule(DeepFakeDataModule):
 
 
 if __name__ == "__main__":
-    from utility.visualize import dataset_entity_visualize
+    from src.utility.visualize import dataset_entity_visualize
 
     class Dummy():
         pass

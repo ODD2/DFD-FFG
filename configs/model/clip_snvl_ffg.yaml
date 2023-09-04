@@ -1,7 +1,6 @@
 model:
   class_path: src.model.clip.snvl.CLIPBinaryVideoLearnerFFG
   init_args:
-    out_dim: 2
     num_frames: 10
     num_queries: 2
     architecture: ViT-B/16

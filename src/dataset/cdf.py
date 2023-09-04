@@ -254,14 +254,14 @@ class CDFDataModule(DeepFakeDataModule):
 
 
 if __name__ == "__main__":
-    from utility.visualize import dataset_entity_visualize
+    from src.utility.visualize import dataset_entity_visualize
 
     class Dummy():
         pass
 
     dtm = CDFDataModule(
         data_dir="datasets/cdf/",
-        batch_size=24,
+        batch_size=22,
         num_workers=0,
         pack=True
     )
