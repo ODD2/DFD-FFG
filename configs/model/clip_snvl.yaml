@@ -5,3 +5,4 @@ model:
     num_queries: 1
     architecture: ViT-B/16
     layer_indices: [6,7,8,9,10,11]
+    is_text_affine: false

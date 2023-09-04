@@ -183,11 +183,11 @@ class ViTSideNetworkVideoLearner(nn.Module):
         self,
         width,
         heads,
-        out_dim,
         num_queries,
         num_frames,
         layer_indices,
         reference_layers,
+        reference_proj=None,
         dropout=0.5
     ):
         super().__init__()
@@ -207,12 +207,13 @@ class ViTSideNetworkVideoLearner(nn.Module):
             layer_indices=layer_indices,
             reference_layers=reference_layers
         )
-
-        self.cls_proj = nn.Sequential(
-            LayerNorm(width),
-            nn.Dropout(dropout),
-            nn.Linear(width, out_dim, bias=False)
-        )
+        if (type(reference_proj) == type(None)):
+            self.proj = nn.Parameter(torch.eye(self.embed_dim))
+            self.embed_dim = width
+        else:
+            self.proj = nn.Parameter(reference_proj.data)
+            self.embed_dim = self.proj.shape[1]
+        self.proj.requires_grad_(False)
 
     def forward(self, layer_attrs, video_mask):
         b, t, q, h, d = layer_attrs[0]['k'].shape
@@ -258,15 +259,15 @@ class ViTSideNetworkVideoLearner(nn.Module):
         x = layer_logits.mean(dim=2)
 
         return {
-            "probs": self.cls_proj(x[:, -1].squeeze(1)),
+            "embeds": x[:, -1] @ self.proj,
             "qs": layer_qs
         }
 
 
-class CLIPVideoAttrExtractor(nn.Module):
+class VideoAttrExtractor(nn.Module):
     def __init__(self, architecture: str = "ViT-B/16"):
         super().__init__()
-        self.model, self.transform = CLIP.load(architecture)
+        self.model, self.transform = CLIP.load(architecture, "cpu")
         self.model = self.model.visual.float()
         self.model.requires_grad_(False)
 
@@ -305,26 +306,95 @@ class CLIPVideoAttrExtractor(nn.Module):
         return self
 
 
-class CLIPVideoLearner(nn.Module):
+class TextAffinityHead(nn.Module):
+    def __init__(self, out_dim=2, architecture: str = "ViT-B/16"):
+        super().__init__()
+        model, _ = CLIP.load(architecture, "cpu")
+        model.visual = None
+        model = model.float().requires_grad_(False)
+        self.token_embedding = model.token_embedding
+        self.positional_embedding = model.positional_embedding
+        self.transformer = model.transformer
+        self.ln_final = model.ln_final
+        self.text_projection = model.text_projection
+        self.logit_scale = model.logit_scale
+        # Inversion
+        tokens = self.token_embedding(CLIP.tokenize(""))[0]
+        self.pre_drop = nn.Dropout()
+        self.beg_token = nn.Parameter(
+            tokens[0].unsqueeze(0),
+            requires_grad=False
+        )
+        self.end_token = nn.Parameter(
+            tokens[1].unsqueeze(0),
+            requires_grad=False
+        )
+        self.cls_text_embed = nn.Parameter(
+            torch.randn(
+                out_dim,
+                tokens.shape[0]-2,
+                tokens.shape[1]
+            ),
+            requires_grad=True
+        )
+
+    def create_anchors(self):
+        x = torch.cat(
+            (
+                self.beg_token.expand((self.cls_text_embed.shape[0], -1, -1)),
+                self.pre_drop(self.cls_text_embed),
+                self.end_token.expand((self.cls_text_embed.shape[0], -1, -1))
+            ),
+            dim=1
+        )  # [batch_size, n_ctx, d_model]
+
+        x = x + self.positional_embedding
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer(x)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = self.ln_final(x)
+
+        # x.shape = [batch_size, n_ctx, transformer.width]
+        # take features from the eot embedding (eot_token is the highest number in each sequence)
+        x = x[torch.arange(x.shape[0]), 76] @ self.text_projection
+
+        return x
+
+    def forward(self, features):
+        anchors = self.create_anchors()
+
+        # normalized features
+        features = features / features.norm(dim=1, keepdim=True)
+        anchors = anchors / anchors.norm(dim=1, keepdim=True)
+
+        # cosine similarity as logits
+        logit_scale = self.logit_scale.exp()
+        logits = logit_scale * features @ anchors.t()
+
+        return logits
+
+
+class VideoFeatureExtractor(nn.Module):
     def __init__(
         self,
-        out_dim=2,
         num_frames=20,
         num_queries=1,
-        architecture: str = "ViT-B/16",
+        architecture="ViT-B/16",
         layer_indices=[6, 7, 8, 9, 10, 11],
+        dropout=0.5
     ):
         super().__init__()
-        self.encoder = CLIPVideoAttrExtractor(architecture)
+        self.encoder = VideoAttrExtractor(architecture)
         self.layer_indices = layer_indices
         self.decoder = ViTSideNetworkVideoLearner(
             width=self.encoder.model.transformer.width,
             heads=self.encoder.model.transformer.heads,
-            out_dim=out_dim,
             num_frames=num_frames,
             num_queries=num_queries,
             layer_indices=layer_indices,
-            reference_layers=self.encoder.model.transformer.resblocks
+            reference_layers=self.encoder.model.transformer.resblocks,
+            reference_proj=self.encoder.model.proj,
+            dropout=dropout
         )
 
     @property
@@ -339,24 +409,67 @@ class CLIPVideoLearner(nn.Module):
         return self.decoder(self.encoder(x), masks)
 
 
+class BinaryLinearClassifier(VideoFeatureExtractor):
+    def __init__(
+        self,
+        *args,
+        dropout=0.5,
+        **kargs,
+    ):
+        super().__init__(dropout=dropout, *args, **kargs)
+
+        self.cls_proj = nn.Sequential(
+            LayerNorm(self.decoder.embed_dim),
+            nn.Dropout(dropout),
+            nn.Linear(self.decoder.embed_dim, 2, bias=False)
+        )
+
+    def forward(self, *args, **kargs):
+        result = super().forward(*args, **kargs)
+        result["logits"] = self.cls_proj(result["embeds"])
+        return result
+
+
+class BinaryTextAffinityClassifier(VideoFeatureExtractor):
+    def __init__(
+        self,
+        *args,
+        architecture="ViT-B/16",
+        **kargs
+    ):
+        super().__init__(*args, architecture=architecture, **kargs)
+        self.cls_head = TextAffinityHead(
+            out_dim=2,
+            architecture=architecture
+        )
+
+    def forward(self,  *args, **kargs):
+        result = super().forward(*args, **kargs)
+        result["logits"] = self.cls_head(result["embeds"])
+        return result
+
+
 class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
-        out_dim: int,
         num_frames: int,
         num_queries: int = 1,
         architecture='ViT-B/16',
         layer_indices: List[int] = [],
+        is_text_affine: bool = False
     ):
         super().__init__()
         self.save_hyperparameters()
-        self.model = CLIPVideoLearner(
-            out_dim=out_dim,
+        params = dict(
             num_frames=num_frames,
             num_queries=num_queries,
             architecture=architecture,
             layer_indices=layer_indices
         )
+        if (not is_text_affine):
+            self.model = BinaryLinearClassifier(**params)
+        else:
+            self.model = BinaryTextAffinityClassifier(**params)
 
     @property
     def transform(self):
@@ -369,7 +482,7 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
     def shared_step(self, batch, stage):
         x, y, mask, indices, dts_name = *batch[:3], *batch[-2:]
         output = self.model(x, mask)
-        logits = output["probs"]
+        logits = output["logits"]
         # classification loss
         cls_loss = nn.functional.cross_entropy(logits, y)
         self.log(
@@ -389,7 +502,14 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
 
 
 class CLIPBinaryVideoLearnerFFG(CLIPBinaryVideoLearner):
-    def __init__(self, face_parts: List[str], face_attn_attr: str, face_feature_path: str, *args, **kargs):
+    def __init__(
+        self,
+        face_parts: List[str],
+        face_attn_attr: str,
+        face_feature_path: str,
+        *args,
+        **kargs
+    ):
         super().__init__(*args, **kargs)
         self.save_hyperparameters()
         with open(face_feature_path, "rb") as f:
@@ -416,8 +536,8 @@ class CLIPBinaryVideoLearnerFFG(CLIPBinaryVideoLearner):
                         qs.flatten(2, 3),
                         self.face_features.repeat((1, qs.shape[2], 1)).to(qs.device),
                         dim=-1
-                    )
-                ) / 2
+                    ).flatten(1)
+                ).mean(dim=1)
             )
             self.log(
                 f"{stage}/{dts_name}/cls_sim",
@@ -426,3 +546,9 @@ class CLIPBinaryVideoLearnerFFG(CLIPBinaryVideoLearner):
             )
             result["loss"] += cls_sim
         return result
+
+
+if __name__ == "__main__":
+    import src.clip as CLIP
+    m = TextAffinityHead()
+    m.forward(torch.randn(10, 512))
