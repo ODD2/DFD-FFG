@@ -87,13 +87,12 @@ class ResidualAttentionBlock(nn.Module):
 
     def __init__(
         self,
-        d_model: int,
         n_head: int,
-        num_frames,
-        block_index,
-        layer_indices,
-        reference_layers,
-        dropout: float = 0.5
+        d_model: int,
+        num_frames: int,
+        block_index: int,
+        layer_indices: List[int],
+        reference_layers: List[nn.Module]
     ):
         super().__init__()
 
@@ -103,16 +102,15 @@ class ResidualAttentionBlock(nn.Module):
             OrderedDict([
                 ("c_fc", nn.Linear(d_model, d_model * 4)),
                 ("gelu", QuickGELU()),
-                ("dropout", nn.Dropout(dropout)),
                 ("c_proj", nn.Linear(d_model * 4, d_model))
             ])
         )
         self.ln_2 = LayerNorm(d_model)
 
         self._apply_reference(block_index, layer_indices, reference_layers)
-        self.ln_1.requires_grad_(False)
-        self.mlp.requires_grad_(False)
-        self.ln_2.requires_grad_(False)
+        # self.ln_1.requires_grad_(False)
+        # self.mlp.requires_grad_(False)
+        # self.ln_2.requires_grad_(False)
 
     def attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, m: torch.Tensor):
         return self.attn(q, k, v, m)
@@ -153,8 +151,12 @@ class Transformer(nn.Module):
         for block_index in range(len(layer_indices)):
             self.resblocks.append(
                 ResidualAttentionBlock(
-                    width, heads, num_frames,
-                    block_index, layer_indices, reference_layers
+                    d_model=width,
+                    n_head=heads,
+                    num_frames=num_frames,
+                    block_index=block_index,
+                    layer_indices=layer_indices,
+                    reference_layers=reference_layers
                 )
             )
 
@@ -183,37 +185,40 @@ class ViTSideNetworkVideoLearner(nn.Module):
         self,
         width,
         heads,
-        num_queries,
         num_frames,
-        layer_indices,
+        num_layers,
+        num_queries,
         reference_layers,
-        reference_proj=None,
-        dropout=0.5
+        reference_ln_post,
+        reference_proj=None
     ):
         super().__init__()
         scale = width ** -0.5
+        total_layers = len(reference_layers)
         self.num_queries = num_queries
-        self.layer_indices = layer_indices
+        self.layer_indices = [i for i in range(total_layers-num_layers, total_layers)]
         self.class_embedding = nn.Parameter(scale * torch.randn(self.num_queries, width))
 
         self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
 
         self.ln_pre = LayerNorm(width)
-        self.drop_pre = torch.nn.Dropout(dropout)
         self.transformer = Transformer(
             width,
             heads,
             num_frames,
-            layer_indices=layer_indices,
+            layer_indices=self.layer_indices,
             reference_layers=reference_layers
         )
+        self.ln_post = LayerNorm(width)
+        self.ln_post.load_state_dict(reference_ln_post.state_dict())
+
         if (type(reference_proj) == type(None)):
             self.proj = nn.Parameter(torch.eye(self.embed_dim))
             self.embed_dim = width
         else:
             self.proj = nn.Parameter(reference_proj.data)
             self.embed_dim = self.proj.shape[1]
-        self.proj.requires_grad_(False)
+        # self.proj.requires_grad_(False)
 
     def forward(self, layer_attrs, video_mask):
         b, t, q, h, d = layer_attrs[0]['k'].shape
@@ -246,9 +251,7 @@ class ViTSideNetworkVideoLearner(nn.Module):
                 layer_attrs[i][k] = layer_attrs[i][k].flatten(1, 2)
 
         # create class_embeddings(queries) for the batch
-        x = self.drop_pre(self.ln_pre(
-            self.class_embedding.unsqueeze(0).repeat(b, 1, 1)
-        ))
+        x = self.ln_pre(self.class_embedding.unsqueeze(0).repeat(b, 1, 1))
 
         layer_logits, layer_qs = self.transformer(
             x,
@@ -307,32 +310,37 @@ class VideoAttrExtractor(nn.Module):
 
 
 class TextAffinityHead(nn.Module):
-    def __init__(self, out_dim=2, architecture: str = "ViT-B/16"):
+    def __init__(self, out_dim=2, n_ctx=77, architecture: str = "ViT-B/16"):
         super().__init__()
         model, _ = CLIP.load(architecture, "cpu")
         model.visual = None
         model = model.float().requires_grad_(False)
+        self.n_ctx = n_ctx
+        self.ln_final = model.ln_final
+        self.logit_scale = model.logit_scale
+        self.transformer = model.transformer
+        self.text_projection = model.text_projection
         self.token_embedding = model.token_embedding
         self.positional_embedding = model.positional_embedding
-        self.transformer = model.transformer
-        self.ln_final = model.ln_final
-        self.text_projection = model.text_projection
-        self.logit_scale = model.logit_scale
+
         # Inversion
         tokens = self.token_embedding(CLIP.tokenize(""))[0]
-        self.pre_drop = nn.Dropout()
         self.beg_token = nn.Parameter(
-            tokens[0].unsqueeze(0),
+            tokens[0].unsqueeze(0).expand(out_dim, -1, -1),
             requires_grad=False
         )
         self.end_token = nn.Parameter(
-            tokens[1].unsqueeze(0),
+            tokens[1].unsqueeze(0).expand(out_dim, -1, -1),
+            requires_grad=False
+        )
+        self.null_token = nn.Parameter(
+            tokens[2].unsqueeze(0).expand(out_dim, 77-self.n_ctx, -1),
             requires_grad=False
         )
         self.cls_text_embed = nn.Parameter(
             torch.randn(
                 out_dim,
-                tokens.shape[0]-2,
+                self.n_ctx-2,
                 tokens.shape[1]
             ),
             requires_grad=True
@@ -341,9 +349,10 @@ class TextAffinityHead(nn.Module):
     def create_anchors(self):
         x = torch.cat(
             (
-                self.beg_token.expand((self.cls_text_embed.shape[0], -1, -1)),
-                self.pre_drop(self.cls_text_embed),
-                self.end_token.expand((self.cls_text_embed.shape[0], -1, -1))
+                self.beg_token,
+                self.cls_text_embed,
+                self.end_token,
+                self.null_token
             ),
             dim=1
         )  # [batch_size, n_ctx, d_model]
@@ -356,7 +365,7 @@ class TextAffinityHead(nn.Module):
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), 76] @ self.text_projection
+        x = x[torch.arange(x.shape[0]), self.n_ctx-1] @ self.text_projection
 
         return x
 
@@ -377,24 +386,22 @@ class TextAffinityHead(nn.Module):
 class VideoFeatureExtractor(nn.Module):
     def __init__(
         self,
+        num_layers=6,
         num_frames=20,
         num_queries=1,
-        architecture="ViT-B/16",
-        layer_indices=[6, 7, 8, 9, 10, 11],
-        dropout=0.5
+        architecture="ViT-B/16"
     ):
         super().__init__()
         self.encoder = VideoAttrExtractor(architecture)
-        self.layer_indices = layer_indices
         self.decoder = ViTSideNetworkVideoLearner(
             width=self.encoder.model.transformer.width,
             heads=self.encoder.model.transformer.heads,
+            num_layers=num_layers,
             num_frames=num_frames,
             num_queries=num_queries,
-            layer_indices=layer_indices,
             reference_layers=self.encoder.model.transformer.resblocks,
-            reference_proj=self.encoder.model.proj,
-            dropout=dropout
+            reference_ln_post=self.encoder.model.ln_post,
+            reference_proj=self.encoder.model.proj
         )
 
     @property
@@ -413,14 +420,12 @@ class BinaryLinearClassifier(VideoFeatureExtractor):
     def __init__(
         self,
         *args,
-        dropout=0.5,
         **kargs,
     ):
-        super().__init__(dropout=dropout, *args, **kargs)
+        super().__init__(*args, **kargs)
 
         self.cls_proj = nn.Sequential(
             LayerNorm(self.decoder.embed_dim),
-            nn.Dropout(dropout),
             nn.Linear(self.decoder.embed_dim, 2, bias=False)
         )
 
@@ -452,19 +457,19 @@ class BinaryTextAffinityClassifier(VideoFeatureExtractor):
 class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
+        num_layers: int,
         num_frames: int,
         num_queries: int = 1,
         architecture='ViT-B/16',
-        layer_indices: List[int] = [],
         is_text_affine: bool = False
     ):
         super().__init__()
         self.save_hyperparameters()
         params = dict(
+            num_layers=num_layers,
             num_frames=num_frames,
             num_queries=num_queries,
-            architecture=architecture,
-            layer_indices=layer_indices
+            architecture=architecture
         )
         if (not is_text_affine):
             self.model = BinaryLinearClassifier(**params)

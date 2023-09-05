@@ -403,6 +403,7 @@ class FFPP(DeepFakeDataset):
                     if idx in self.video_table[df_type][comp]:
                         clips = int(self.video_table[df_type][comp][idx]["duration"] // self.clip_duration)
                         if (clips > 0):
+                            clips = min(clips, self.max_clips)
                             comp_videos.append((df_type, comp, idx, clips))
                     else:
                         logging.warning(
@@ -675,7 +676,8 @@ class FFPPDataModule(DeepFakeDataModule):
                 split="train",
                 pack=self.pack,
                 strategy=self.strategy,
-                augmentation=self.augmentations
+                augmentation=self.augmentations,
+                max_clips=self.max_clips
             )
             self._val_dataset = data_cls(
                 split="val",
@@ -703,8 +705,10 @@ if __name__ == "__main__":
         ["REAL", "DF", "FS", "F2F", "NT"],
         ["c23"],
         data_dir="datasets/ffpp/",
-        batch_size=1,
-        num_workers=0,
+        batch_size=24,
+        num_workers=8,
+        num_frames=10,
+        clip_duration=1,
         force_random_speed=False,
         strategy=FFPPSampleStrategy.NORMAL,
         augmentations=[
@@ -714,6 +718,7 @@ if __name__ == "__main__":
             FFPPAugmentation.FRAME
         ],
         pack=False,
+        max_clips=3
     )
 
     model = Dummy()

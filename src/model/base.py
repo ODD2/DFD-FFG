@@ -54,7 +54,7 @@ class ODClassifier(pl.LightningModule):
 
     # TODO: isolate optimizer and lr_scheduler configurations
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=1e-3)
+        optimizer = optim.AdamW(self.parameters(), lr=1e-4)
         return optimizer
 
 

@@ -100,7 +100,8 @@ class DeepFakeDataset(Dataset):
         clip_duration: int,
         split: str,
         transform: Optional[Callable],
-        pack: bool
+        pack: bool,
+        max_clips: int = 100
     ):
         self.data_dir = data_dir
         self.vid_ext = vid_ext
@@ -109,6 +110,7 @@ class DeepFakeDataset(Dataset):
         self.transform = transform
         self.split = split
         self.pack = pack
+        self.max_clips = max_clips
 
         # list of video infos
         self.video_list = []
@@ -166,13 +168,14 @@ class DeepFakeDataset(Dataset):
 class DeepFakeDataModule(pl.LightningDataModule):
     def __init__(
         self,
+        vid_ext: str,
         data_dir: str,
-        batch_size: int = 24,
-        num_workers: int = 8,
-        vid_ext: str = ".avi",
-        clip_duration: int = 4,
-        num_frames: int = 10,
-        pack: bool = False
+        num_frames: int = None,
+        batch_size: int = None,
+        num_workers: int = None,
+        clip_duration: int = None,
+        pack: bool = False,
+        max_clips: int = 100,
     ):
         super().__init__()
         # generic parameters
@@ -186,12 +189,22 @@ class DeepFakeDataModule(pl.LightningDataModule):
         self.num_frames = num_frames
         self.clip_duration = clip_duration
         self.pack = pack
+        self.max_clips = max_clips
 
         # dataset splits
         self._train_dataset = None
         self._val_dataset = None
         self._test_dataset = None
         self._predict_dataset = None
+
+    def overwrite_parameters(self, **kargs):
+        for k, v in kargs.items():
+            cur_v = getattr(self, k)
+            if (type(cur_v) == type(None)):
+                logging.debug(f"Overwrite parameter '{k}' with value '{v}'")
+                setattr(self, k, v)
+            else:
+                logging.debug(f"Parameter '{k}' has specified value '{cur_v}', ignore overwrite '{v}'.")
 
     def create_dataloader(self, dataset, shuffle=False):
         if (type(dataset) == type(None)):
@@ -303,3 +316,28 @@ class ODDataModule(pl.LightningDataModule):
 
     def predict_dataloader(self):
         raise NotImplementedError()
+
+
+class ODDeepFakeDataModule(ODDataModule):
+    def __init__(
+        self,
+        batch_size: int,
+        num_workers: int,
+        num_frames: int,
+        clip_duration: int,
+        *args,
+        **kargs,
+    ):
+        super().__init__(*args, **kargs)
+        global_defaults = dict(
+            batch_size=batch_size,
+            num_workers=num_workers,
+            num_frames=num_frames,
+            clip_duration=clip_duration
+        )
+        for dtm in [
+            *self._train_datamodules,
+            *self._test_datamodules,
+            *self._val_datamodules
+        ]:
+            dtm.overwrite_parameters(**global_defaults)

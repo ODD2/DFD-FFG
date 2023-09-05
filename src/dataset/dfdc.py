@@ -67,6 +67,7 @@ class DFDC(DeepFakeDataset):
             if name in self.video_table:
                 clips = int(self.video_table[name]["duration"] // self.clip_duration)
                 if (clips > 0):
+                    clips = min(clips, self.max_clips)
                     _videos.append((label, name, clips))
             else:
                 logging.warning(

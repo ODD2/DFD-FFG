@@ -72,6 +72,7 @@ class CDF(DeepFakeDataset):
                 if name in self.video_table[df_type]:
                     clips = int(self.video_table[df_type][name]["duration"] // self.clip_duration)
                     if (clips > 0):
+                        clips = min(clips, self.max_clips)
                         _videos.append((df_type.upper(), name, clips))
                 else:
                     logging.warning(
