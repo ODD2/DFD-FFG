@@ -1,5 +1,5 @@
 model:
-  class_path: src.model.clip.snvl.CLIPBinaryVideoLearner
+  class_path: src.model.clip.snvl.CLIPContrastBinaryTextAffineVideoLearner
   init_args:
     num_layers: 6
     num_frames: 10

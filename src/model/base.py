@@ -33,8 +33,10 @@ class ODClassifier(pl.LightningModule):
         return result['loss']
 
     def shared_step(self, batch, stage):
-        x, y, mask, indices, dts_name = *batch[:3], *batch[-2:]
-        x = self.model(x, mask)
+        x, y, z = batch["xyz"]
+        indices = batch["indices"]
+        dts_name = batch["dts_name"]
+        logits = self.model(x, **z)
         loss = nn.functional.cross_entropy(x, y)
         self.log(
             f"{stage}/{dts_name}/loss",
@@ -42,7 +44,7 @@ class ODClassifier(pl.LightningModule):
             batch_size=x.shape[0]
         )
         return {
-            "logits": x,
+            "logits": logits,
             "labels": y,
             "loss": loss,
             "dts_name": dts_name,

@@ -587,8 +587,8 @@ class FFPP(DeepFakeDataset):
             logging.debug(
                 "Video Clip: {}({}s~{}s), Completed!".format(
                     vid_path,
-                    self.clip_duration*clip_of_video,
-                    (self.clip_duration+1)*clip_of_video
+                    self.clip_duration * clip_of_video,
+                    (self.clip_duration + 1) * clip_of_video
                 )
             )
 
@@ -623,6 +623,9 @@ class FFPP(DeepFakeDataset):
     def video_meta(self, idx):
         df_type, comp, name = self.video_info(idx)[1:4]
         return self.video_table[df_type][comp][name]
+
+    def video_repr(self, idx):
+        return '/'.join([str(i) for i in self.video_info(idx)[1:-1]])
 
 
 class FFPPDataModule(DeepFakeDataModule):

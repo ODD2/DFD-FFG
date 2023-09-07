@@ -1,0 +1,11 @@
+# lightning.pytorch==2.0.7
+trainer:
+  max_epochs: 5 #!!!
+  limit_train_batches: 0.3 #!!!
+  limit_val_batches: 30 #!!!
+  check_val_every_n_epoch: 1 #!!!
+  log_every_n_steps: 50 #!!!
+  accumulate_grad_batches: 1 #!!!
+  detect_anomaly: true #!!!
+  # gradient_clip_val: 0.1
+  # gradient_clip_algorithm: value

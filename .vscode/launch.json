@@ -24,7 +24,9 @@
                 "--config",
                 "configs/test.yaml",
                 "--config",
-                "configs/model/clip_snvl_ffg.yaml"
+                "configs/model/clip_snvl.yaml"
+                // "configs/model/clip_snvl_ffg.yaml"
+                // "configs/model/clip_text_aff_snvl.yaml"
             ]
         },
         {

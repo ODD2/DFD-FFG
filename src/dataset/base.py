@@ -136,6 +136,9 @@ class DeepFakeDataset(Dataset):
     def video_meta(self, idx):
         raise NotImplementedError()
 
+    def video_repr(self, idx):
+        return '/'.join([str(i) for i in self.video_info(idx)[1:]])
+
     def get_item(self, idx, with_entity_info=False):
         raise NotImplementedError()
 
@@ -157,12 +160,26 @@ class DeepFakeDataset(Dataset):
 
         # post-process the label & index to match the shape of corresponding clips
         num_clips_per_entity = torch.tensor([entity_clips.shape[0] for entity_clips in batch_entity_clips])
-        label = torch.tensor(batch_entity_label).repeat_interleave(num_clips_per_entity)
-        index = torch.tensor(batch_entity_indices).repeat_interleave(num_clips_per_entity)
+        labels = torch.tensor(batch_entity_label).repeat_interleave(num_clips_per_entity)
+        indices = torch.tensor(batch_entity_indices).repeat_interleave(num_clips_per_entity)
 
-        assert clips.shape[0] == masks.shape[0] == label.shape[0] == index.shape[0]
+        assert clips.shape[0] == masks.shape[0] == labels.shape[0] == indices.shape[0]
 
-        return [clips, label, masks, index, self.cls_name]
+        dts_name = self.cls_name
+        names = [self.video_repr(i) for i in indices]
+
+        return dict(
+            xyz=(
+                clips,
+                labels,
+                dict(
+                    masks=masks
+                )
+            ),
+            indices=indices,
+            dts_name=dts_name,
+            names=names
+        )
 
 
 class DeepFakeDataModule(pl.LightningDataModule):
