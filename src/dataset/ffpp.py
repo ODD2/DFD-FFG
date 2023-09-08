@@ -71,7 +71,7 @@ class FFPP(DeepFakeDataset):
         compressions: List[str],
         n_px: int,
         strategy: FFPPSampleStrategy,
-        augmentation: FFPPAugmentation,
+        augmentations: FFPPAugmentation,
         *args,
         force_random_speed: Optional[bool] = None,
         max_clips=100,
@@ -83,7 +83,7 @@ class FFPP(DeepFakeDataset):
         self.compressions = compressions
         self.n_px = n_px
         self.strategy = strategy
-        self.augmentation = augmentation
+        self.augmentations = augmentations
         self.train = (True if self.split == "train" else False)
         self.random_speed = (
             force_random_speed
@@ -107,22 +107,22 @@ class FFPP(DeepFakeDataset):
         self._build_video_list()
 
         # augmentation selections
-        logging.debug(f"Augmentations: {self.augmentation}")
-        if FFPPAugmentation.NONE in self.augmentation:
+        logging.debug(f"Augmentations: {str(self.augmentations)}")
+        if FFPPAugmentation.NONE in self.augmentations:
             self.frame_augmentation = None
             self.video_augmentation = None
 
-        elif FFPPAugmentation.DEV in self.augmentation:
+        elif FFPPAugmentation.DEV in self.augmentations:
             self.frame_augmentation = None
 
-            if FFPPAugmentation.RGB in self.augmentation:
+            if FFPPAugmentation.RGB in self.augmentations:
                 self.video_augmentation = alb.ReplayCompose(
                     [
                         alb.RGBShift((-20, 20), (-20, 20), (-20, 20), p=1.)
                     ],
                     p=1.
                 )
-            elif FFPPAugmentation.HUE in self.augmentation:
+            elif FFPPAugmentation.HUE in self.augmentations:
                 self.video_augmentation = alb.ReplayCompose(
                     [
                         alb.HueSaturationValue(
@@ -134,7 +134,7 @@ class FFPP(DeepFakeDataset):
                     ],
                     p=1.
                 )
-            elif FFPPAugmentation.BRIGHT in self.augmentation:
+            elif FFPPAugmentation.BRIGHT in self.augmentations:
                 self.video_augmentation = alb.ReplayCompose(
                     [
                         alb.RandomBrightnessContrast(
@@ -143,7 +143,7 @@ class FFPP(DeepFakeDataset):
                     ],
                     p=1.
                 )
-            elif FFPPAugmentation.COMP in self.augmentation:
+            elif FFPPAugmentation.COMP in self.augmentations:
                 self.video_augmentation = alb.ReplayCompose(
                     [
                         alb.ImageCompression(
@@ -152,14 +152,14 @@ class FFPP(DeepFakeDataset):
                     ],
                     p=1.
                 )
-            elif FFPPAugmentation.DSCALE in self.augmentation:
+            elif FFPPAugmentation.DSCALE in self.augmentations:
                 self.video_augmentation = alb.ReplayCompose(
                     [
                         RandomDownScale((2, 3), p=1)
                     ],
                     p=1.
                 )
-            elif FFPPAugmentation.SHARPEN in self.augmentation:
+            elif FFPPAugmentation.SHARPEN in self.augmentations:
                 self.video_augmentation = alb.ReplayCompose(
                     [
                         alb.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=1)
@@ -169,7 +169,7 @@ class FFPP(DeepFakeDataset):
             else:
                 raise NotImplementedError()
 
-        elif FFPPAugmentation.ROBUSTNESS in self.augmentation:
+        elif FFPPAugmentation.ROBUSTNESS in self.augmentations:
             self.frame_augmentation = None
             self.video_augmentation = alb.ReplayCompose(
                 [
@@ -185,7 +185,7 @@ class FFPP(DeepFakeDataset):
                 p=1.
             )
 
-        elif FFPPAugmentation.PERTURBATION in self.augmentation:
+        elif FFPPAugmentation.PERTURBATION in self.augmentations:
             augmentations = [
                 alb.Resize(
                     self.n_px, self.n_px, cv2.INTER_CUBIC
@@ -212,11 +212,11 @@ class FFPP(DeepFakeDataset):
                 p=1.
             )
 
-        elif FFPPAugmentation.NORMAL in self.augmentation:
+        elif FFPPAugmentation.NORMAL in self.augmentations:
             self.frame_augmentation = None
             self.video_augmentation = None
 
-            if FFPPAugmentation.VIDEO in self.augmentation:
+            if FFPPAugmentation.VIDEO in self.augmentations:
                 augmentations = [
                     alb.Resize(
                         self.n_px, self.n_px, cv2.INTER_CUBIC
@@ -236,7 +236,7 @@ class FFPP(DeepFakeDataset):
                     alb.HorizontalFlip()
                 ]
 
-                if FFPPAugmentation.VIDEO_RRC in self.augmentation:
+                if FFPPAugmentation.VIDEO_RRC in self.augmentations:
                     augmentations += [
                         alb.RandomResizedCrop(
                             self.n_px, self.n_px, scale=(0.7, 0.9), ratio=(1, 1), p=0.3
@@ -257,7 +257,7 @@ class FFPP(DeepFakeDataset):
                     p=1.
                 )
 
-            if FFPPAugmentation.FRAME in self.augmentation:
+            if FFPPAugmentation.FRAME in self.augmentations:
                 augmentations = [
                     alb.Resize(
                         self.n_px, self.n_px, cv2.INTER_CUBIC
@@ -275,7 +275,7 @@ class FFPP(DeepFakeDataset):
                         quality_lower=80, quality_upper=100, p=0.5
                     ),
                 ]
-                if FFPPAugmentation.FRAME_NOISE in self.augmentation:
+                if FFPPAugmentation.FRAME_NOISE in self.augmentations:
                     augmentations += [
                         alb.OneOf(
                             [
@@ -360,9 +360,13 @@ class FFPP(DeepFakeDataset):
                 x = [torch.from_numpy(_x.transpose((2, 0, 1))) for _x in x]
                 return x, replay
 
-        self.augmentation = driver
+        self.training_augmentations = driver
 
-        self.video_readers = dict()
+        # item to entity mapping list
+        self.item_entity_list = []
+
+        # construct item-entity mapping
+        self._build_item_entity_list()
 
     def _build_video_table(self):
         self.video_table = {}
@@ -440,6 +444,39 @@ class FFPP(DeepFakeDataset):
 
         self.stack_video_clips.pop(0)
 
+    def _build_item_entity_list(self):
+        item_num = len(self)
+        self.item_entity_list = [None] * item_num
+        for idx in range(item_num):
+            logging.debug(f"Sample strategy:{self.strategy}")
+            if self.strategy == FFPPSampleStrategy.NORMAL:
+                desire_entity_indices = [idx]
+            elif self.strategy == FFPPSampleStrategy.CONTRAST_RAND:
+                _, video_df_type, _, _, _ = self.video_info(idx)
+                logging.debug(f"Source Index/DF_TYPE: {idx}/{video_df_type}")
+                if (video_df_type == "REAL"):
+                    logging.debug(f"Seek for a Fake Entity...")
+                    ground = random.choice(list(self.fake_clip_idx.keys()))
+                    video_name = random.choice(list(self.fake_clip_idx[ground].keys()))
+                    interval = random.choice(self.fake_clip_idx[ground][video_name])
+                    logging.debug(f"Pair with {video_name} at {ground}-ground ...")
+                else:
+                    logging.debug(f"Seek for a Real Entity...")
+                    video_name = random.choice(list(self.real_clip_idx.keys()))
+                    interval = self.real_clip_idx[video_name]
+                    logging.debug(f"Pair with {video_name}...")
+
+                c_idx = random.randint(*interval)
+                desire_entity_indices = [idx, c_idx]
+            elif self.strategy == FFPPSampleStrategy.CONTRAST_PAIR:
+                raise NotImplementedError()
+            elif self.strategy == FFPPSampleStrategy.QUALITY_PAIR:
+                raise NotImplementedError()
+            else:
+                raise NotImplementedError()
+            logging.debug(f"Item: {idx} desires the entities: {desire_entity_indices}")
+            self.item_entity_list[idx] = desire_entity_indices
+
     def __len__(self):
         if (self.pack):
             return len(self.video_list)
@@ -451,45 +488,13 @@ class FFPP(DeepFakeDataset):
         return [[entity[k] for entity in item_entities] for k in item_entities[0].keys()]
 
     def get_item(self, idx, with_entity_info=False):
-        desire_item_indices = []
-        logging.debug(f"Sample strategy:{self.strategy}")
-        if self.strategy == FFPPSampleStrategy.NORMAL:
-            desire_item_indices = [idx]
-
-        elif self.strategy == FFPPSampleStrategy.CONTRAST_RAND:
-            _, video_df_type, _, _, _ = self.video_info(idx)
-            logging.debug(f"Source Index/DF_TYPE: {idx}/{video_df_type}")
-            if (video_df_type == "REAL"):
-                logging.debug(f"Seek for a Fake Entity...")
-                ground = random.choice(list(self.fake_clip_idx.keys()))
-                video_name = random.choice(list(self.fake_clip_idx[ground].keys()))
-                interval = random.choice(self.fake_clip_idx[ground][video_name])
-                logging.debug(f"Pair with {video_name} at {ground}-ground ...")
-            else:
-                logging.debug(f"Seek for a Real Entity...")
-                video_name = random.choice(list(self.real_clip_idx.keys()))
-                interval = self.real_clip_idx[video_name]
-                logging.debug(f"Pair with {video_name}...")
-
-            c_idx = random.randint(*interval)
-            desire_item_indices = [idx, c_idx]
-
-        elif self.strategy == FFPPSampleStrategy.CONTRAST_PAIR:
-            raise NotImplementedError()
-
-        elif self.strategy == FFPPSampleStrategy.QUALITY_PAIR:
-            raise NotImplementedError()
-
-        else:
-            raise NotImplementedError()
-
-        logging.debug(f"Item desires the entities:{desire_item_indices}")
+        desire_entity_indices = self.item_entity_list[idx]
         item_entities = [
             self.get_entity(
                 desire_item_index,
                 with_entity_info=with_entity_info
             )
-            for desire_item_index in desire_item_indices
+            for desire_item_index in desire_entity_indices
         ]
 
         return item_entities
@@ -561,7 +566,7 @@ class FFPP(DeepFakeDataset):
                 frames.append(frame["data"])
 
             # augment the data only while training.
-            frames, replay = self.augmentation(frames, replay)
+            frames, replay = self.training_augmentations(frames, replay)
             logging.debug("Augmentations Applied.")
 
             # stack list of torch frames to tensor
@@ -687,14 +692,14 @@ class FFPPDataModule(DeepFakeDataModule):
                 split="train",
                 pack=self.pack,
                 strategy=self.strategy,
-                augmentation=self.augmentations,
+                augmentations=self.augmentations,
                 max_clips=self.max_clips
             )
             self._val_dataset = data_cls(
                 split="val",
                 pack=self.pack,
                 strategy=FFPPSampleStrategy.NORMAL,
-                augmentation=FFPPAugmentation.NONE
+                augmentations=FFPPAugmentation.NONE
             )
 
         elif stage == "test":
@@ -702,12 +707,13 @@ class FFPPDataModule(DeepFakeDataModule):
                 split="test",
                 pack=self.pack,
                 strategy=FFPPSampleStrategy.NORMAL,
-                augmentation=FFPPAugmentation.NONE
+                augmentations=FFPPAugmentation.NONE
             )
 
 
 if __name__ == "__main__":
     from src.utility.visualize import dataset_entity_visualize
+    # logging.basicConfig(level="DEBUG")
 
     class Dummy():
         pass
@@ -722,7 +728,7 @@ if __name__ == "__main__":
         num_frames=10,
         clip_duration=1,
         force_random_speed=False,
-        strategy=FFPPSampleStrategy.NORMAL,
+        strategy=FFPPSampleStrategy.CONTRAST_RAND,
         augmentations=[
             FFPPAugmentation.NORMAL,
             FFPPAugmentation.VIDEO,
