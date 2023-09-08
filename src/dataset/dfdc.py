@@ -49,33 +49,38 @@ class DFDC(DeepFakeDataset):
         self.video_table = video_metas
 
     def _build_video_list(self):
-        self.video_list = []
-
-        video_list = pd.read_csv(
+        video_table = pd.read_csv(
             path.join(self.data_dir, 'csv_files', f'{self.split}.csv'),
             sep=' ',
             header=None,
             names=["name", "label"]
         )
 
-        _videos = []
-
-        for index, row in video_list.iterrows():
+        self.video_list = []
+        label_videos = {
+            "REAL": [],
+            "FAKE": []
+        }
+        for index, row in video_table.iterrows():
             filename = row["name"]
             name, ext = path.splitext(filename)
             label = "REAL" if row["label"] == 0 else "FAKE"
             if name in self.video_table:
                 clips = int(self.video_table[name]["duration"] // self.clip_duration)
                 if (clips > 0):
-                    clips = min(clips, self.max_clips)
-                    _videos.append((label, name, clips))
+                    clips = clips
+                    label_videos[label].append((label, name, clips))
             else:
                 logging.warning(
                     f'Video {path.join(self.data_dir, "videos", name)} does not present in the processed dataset.'
                 )
                 self.stray_videos[filename] = (0 if label == "REAL" else 1)
+        for label in label_videos:
+            _videos = label_videos[label]
+            self.video_list += _videos[:int(len(_videos)*self.ratio)]
 
-        self.video_list += _videos
+        # permanant shuffle
+        random.Random(1019).shuffle(self.video_list)
 
         # stacking up the amount of data clips for further usage
         self.stack_video_clips = [0]
@@ -240,6 +245,7 @@ class DFDCDataModule(DeepFakeDataModule):
             num_frames=self.num_frames,
             clip_duration=self.clip_duration,
             transform=self.transform,
+            ratio=self.ratio
         )
 
         if (type(self._val_dataset) == type(self._test_dataset) == type(None)):
@@ -257,8 +263,12 @@ if __name__ == "__main__":
 
     dtm = DFDCDataModule(
         data_dir="datasets/dfdc/",
+        vid_ext=".avi",
         batch_size=24,
         num_workers=16,
+        num_frames=10,
+        clip_duration=1,
+        ratio=0.5,
         pack=True
     )
 

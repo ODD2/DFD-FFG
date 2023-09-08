@@ -74,6 +74,7 @@ class FFPP(DeepFakeDataset):
         augmentation: FFPPAugmentation,
         *args,
         force_random_speed: Optional[bool] = None,
+        max_clips=100,
         **kargs
     ):
         super().__init__(*args, **kargs)
@@ -93,6 +94,7 @@ class FFPP(DeepFakeDataset):
                 False
             )
         )
+        self.max_clips = max_clips
 
         # record missing videos in the csv file for further usage.
         self.stray_videos = {}
@@ -410,7 +412,10 @@ class FFPP(DeepFakeDataset):
                             f'Video {path.join(self.data_dir, self.TYPE_DIRS[df_type], comp, "videos", idx)} does not present in the processed dataset.'
                         )
                         self.stray_videos[idx] = (0 if df_type == "REAL" else 1)
-                self.video_list += comp_videos
+                self.video_list += comp_videos[:int(len(comp_videos)*self.ratio)]
+
+        # permanant shuffle
+        random.Random(1019).shuffle(self.video_list)
 
         # stacking up the amount of data clips for further usage
         self.stack_video_clips = [0]
@@ -636,6 +641,7 @@ class FFPPDataModule(DeepFakeDataModule):
             strategy: FFPPSampleStrategy = FFPPSampleStrategy.NORMAL,
             augmentations: List[FFPPAugmentation] = [FFPPAugmentation.NONE],
             force_random_speed: bool = None,
+            max_clips: int = 100,
             *args, **kargs
 
     ):
@@ -651,6 +657,7 @@ class FFPPDataModule(DeepFakeDataModule):
         self.strategy = strategy
         self.augmentations = FFPPAugmentation(sum(augmentations))
         self.force_random_speed = force_random_speed
+        self.max_clips = max_clips
 
     def affine_model(self, model):
         super().affine_model(model)
@@ -659,7 +666,7 @@ class FFPPDataModule(DeepFakeDataModule):
     def prepare_data(self):
         FFPP.prepare_data(self.data_dir, self.compressions, self.vid_ext)
 
-    def setup(self, stage: str, with_val=True):
+    def setup(self, stage: str):
         # Assign train/val datasets for use in dataloaders
         data_cls = partial(
             FFPP,
@@ -671,6 +678,7 @@ class FFPPDataModule(DeepFakeDataModule):
             clip_duration=self.clip_duration,
             transform=self.transform,
             n_px=self.n_px,
+            ratio=self.ratio,
             force_random_speed=self.force_random_speed
         )
 
@@ -708,6 +716,7 @@ if __name__ == "__main__":
         ["REAL", "DF", "FS", "F2F", "NT"],
         ["c23"],
         data_dir="datasets/ffpp/",
+        vid_ext='.avi',
         batch_size=24,
         num_workers=8,
         num_frames=10,
@@ -721,7 +730,8 @@ if __name__ == "__main__":
             FFPPAugmentation.FRAME
         ],
         pack=False,
-        max_clips=3
+        ratio=0.5,
+        max_clips=5
     )
 
     model = Dummy()

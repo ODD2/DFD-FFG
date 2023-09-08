@@ -72,7 +72,7 @@ class CDF(DeepFakeDataset):
                 if name in self.video_table[df_type]:
                     clips = int(self.video_table[df_type][name]["duration"] // self.clip_duration)
                     if (clips > 0):
-                        clips = min(clips, self.max_clips)
+                        clips = clips
                         _videos.append((df_type.upper(), name, clips))
                 else:
                     logging.warning(
@@ -80,7 +80,10 @@ class CDF(DeepFakeDataset):
                     )
                     self.stray_videos[filename] = (0 if df_type == "REAL" else 1)
 
-            self.video_list += _videos
+            self.video_list += _videos[:int(len(_videos)*self.ratio)]
+
+        # permanant shuffle
+        random.Random(1019).shuffle(self.video_list)
 
         # stacking up the amount of data clips for further usage
         self.stack_video_clips = [0]
@@ -245,6 +248,7 @@ class CDFDataModule(DeepFakeDataModule):
             num_frames=self.num_frames,
             clip_duration=self.clip_duration,
             transform=self.transform,
+            ratio=self.ratio
         )
 
         if (type(self._val_dataset) == type(self._test_dataset) == type(None)):
@@ -262,8 +266,12 @@ if __name__ == "__main__":
 
     dtm = CDFDataModule(
         data_dir="datasets/cdf/",
+        vid_ext=".avi",
         batch_size=22,
         num_workers=0,
+        num_frames=10,
+        clip_duration=1,
+        ratio=0.5,
         pack=True
     )
 
@@ -279,16 +287,16 @@ if __name__ == "__main__":
     iterable = dtm._test_dataset
     save_folder = f"./misc/extern/dump_dataset/cdf/test/"
     # entity dump
-    for entity_idx in tqdm(range(len(iterable))):
-        if (entity_idx > 100):
-            break
-        dataset_entity_visualize(iterable.get_entity(entity_idx, with_entity_info=True), base_dir=save_folder)
+    # for entity_idx in tqdm(range(len(iterable))):
+    #     if (entity_idx > 100):
+    #         break
+    #     dataset_entity_visualize(iterable.get_entity(entity_idx, with_entity_info=True), base_dir=save_folder)
 
     # # single dump
     # dataset_entity_visualize(iterable.get_entity(167, with_entity_info=True), base_dir=save_folder)
 
     # iterate the all dataloaders for debugging.
-    # for fn in [dtm.val_dataloader, dtm.test_dataloader]:
-    #     iterable = fn()
-    #     for batch in tqdm(iterable):
-    #         pass
+    for fn in [dtm.val_dataloader, dtm.test_dataloader]:
+        iterable = fn()
+        for batch in tqdm(iterable):
+            pass
