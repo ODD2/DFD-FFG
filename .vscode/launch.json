@@ -22,9 +22,13 @@
                 "--config",
                 "configs/base.yaml",
                 "--config",
-                "configs/test.yaml",
+                "configs/model/clip/snvl.yaml",
                 "--config",
-                "configs/model/clip_snvl.yaml"
+                "configs/model/clip/ffg.yaml",
+                "--config",
+                "configs/model/clip/vpt.yaml",
+                "--config",
+                "configs/test.yaml",
                 // "configs/model/clip_snvl_ffg.yaml"
                 // "configs/model/clip_text_aff_snvl.yaml"
             ]
@@ -46,7 +50,7 @@
             "name": "Python: Test",
             "type": "python",
             "request": "launch",
-            "module": "test",
+            "module": "testing.vpt",
             "justMyCode": false
         },
         {

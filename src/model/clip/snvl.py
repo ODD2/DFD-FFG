@@ -10,6 +10,7 @@ from collections import OrderedDict
 from typing import List, Optional, Dict
 from src.clip.model import LayerNorm, QuickGELU
 from src.model.base import ODClassifier, ODBinaryMetricClassifier
+from src.clip.model_vpt import PromptMode
 
 
 class MultiheadAttention(nn.Module):
@@ -63,7 +64,11 @@ class MultiheadAttention(nn.Module):
 
     def forward(self, q, k, v, m):
         # qs is a tuple with elements with shape equal to: b, q, h, d
-        qs = self.in_proj(q).view(*q.shape[:2], self.n_head, -1).split(self.embed_dim // self.n_head, -1)
+        qs = (
+            self.in_proj(q)
+            .view(*q.shape[:2], self.n_head, -1)
+            .split(self.embed_dim // self.n_head, -1)
+        )
         m = m.unsqueeze(1).unsqueeze(-1)
 
         aff = 0
@@ -77,7 +82,10 @@ class MultiheadAttention(nn.Module):
 
         mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
 
-        return self.out_proj(mix.flatten(-2)), torch.stack([_q.flatten(-2) for _q in qs], dim=1)
+        return (
+            self.out_proj(mix.flatten(-2)),
+            torch.stack([_q.flatten(-2) for _q in qs], dim=1)
+        )
 
 
 class ResidualAttentionBlock(nn.Module):
@@ -96,7 +104,7 @@ class ResidualAttentionBlock(nn.Module):
         reference_layers: List[nn.Module]
     ):
         super().__init__()
-
+        self.in_drop = nn.Dropout()
         self.attn = MultiheadAttention(num_frames, d_model, n_head)
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(
@@ -109,15 +117,18 @@ class ResidualAttentionBlock(nn.Module):
         self.ln_2 = LayerNorm(d_model)
 
         self._apply_reference(block_index, layer_indices, reference_layers)
-        # self.ln_1.requires_grad_(False)
-        # self.mlp.requires_grad_(False)
-        # self.ln_2.requires_grad_(False)
+        self.ln_1.requires_grad_(False)
+        self.mlp.requires_grad_(False)
+        self.ln_2.requires_grad_(False)
 
     def attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, m: torch.Tensor):
         return self.attn(q, k, v, m)
 
     def forward(self, x: torch.Tensor, k: torch.Tensor, v: torch.Tensor, m: torch.Tensor):
-        _x, qs = self.attention(self.ln_1(x), k, v, m)
+        _x, qs = self.attention(
+            self.ln_1(self.in_drop(x)),
+            k, v, m
+        )
         x = x + _x
         x = x + self.mlp(self.ln_2(x))
         return x, qs
@@ -199,7 +210,7 @@ class ViTSideNetworkVideoLearner(nn.Module):
         self.num_queries = num_queries
         self.layer_indices = [i for i in range(total_layers - num_layers, total_layers)]
         self.class_embedding = nn.Parameter(scale * torch.randn(self.num_queries, width))
-
+        self.drop_pre = nn.Dropout()
         self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
 
         self.ln_pre = LayerNorm(width)
@@ -219,7 +230,9 @@ class ViTSideNetworkVideoLearner(nn.Module):
         else:
             self.proj = nn.Parameter(reference_proj.data)
             self.embed_dim = self.proj.shape[1]
-        # self.proj.requires_grad_(False)
+
+        self.proj.requires_grad_(False)
+        self.ln_post.requires_grad_(False)
 
     def forward(self, layer_attrs, video_mask):
         b, t, q, h, d = layer_attrs[0]['k'].shape
@@ -252,7 +265,11 @@ class ViTSideNetworkVideoLearner(nn.Module):
                 layer_attrs[i][k] = layer_attrs[i][k].flatten(1, 2)
 
         # create class_embeddings(queries) for the batch
-        x = self.ln_pre(self.class_embedding.unsqueeze(0).repeat(b, 1, 1))
+        x = self.ln_pre(
+            self.drop_pre(
+                self.class_embedding.unsqueeze(0).repeat(b, 1, 1)
+            )
+        )
 
         layer_logits, layer_qs = self.transformer(
             x,
@@ -261,19 +278,36 @@ class ViTSideNetworkVideoLearner(nn.Module):
         )
 
         x = layer_logits.mean(dim=2)
+        x = self.ln_post(x[:, -1]) @ self.proj
 
         return {
-            "embeds": x[:, -1] @ self.proj,
+            "embeds": x,
             "qs": layer_qs
         }
 
 
 class VideoAttrExtractor(nn.Module):
-    def __init__(self, architecture: str = "ViT-B/16"):
+    def __init__(
+        self,
+        architecture,
+        prompt_mode,
+        prompt_num,
+        prompt_layers,
+        prompt_dropout
+    ):
         super().__init__()
-        self.model, self.transform = CLIP.load(architecture, "cpu")
+        self.model, self.transform = CLIP.load(
+            architecture,
+            "cpu",
+            prompt_mode=prompt_mode,
+            prompt_num=prompt_num,
+            prompt_layers=prompt_layers,
+            prompt_dropout=prompt_dropout,
+        )
         self.model = self.model.visual.float()
         self.model.requires_grad_(False)
+        for param in self.model.prompt_parameters():
+            param.requires_grad_(True)
 
     @property
     def n_px(self):
@@ -387,13 +421,23 @@ class TextAffinityHead(nn.Module):
 class VideoFeatureExtractor(nn.Module):
     def __init__(
         self,
-        num_layers=6,
-        num_frames=20,
-        num_queries=1,
-        architecture="ViT-B/16"
+        num_layers,
+        num_frames,
+        num_queries,
+        architecture,
+        prompt_mode,
+        prompt_num,
+        prompt_layers,
+        prompt_dropout
     ):
         super().__init__()
-        self.encoder = VideoAttrExtractor(architecture)
+        self.encoder = VideoAttrExtractor(
+            architecture=architecture,
+            prompt_mode=prompt_mode,
+            prompt_num=prompt_num,
+            prompt_layers=prompt_layers,
+            prompt_dropout=prompt_dropout,
+        )
         self.decoder = ViTSideNetworkVideoLearner(
             width=self.encoder.model.transformer.width,
             heads=self.encoder.model.transformer.heads,
@@ -427,7 +471,12 @@ class BinaryLinearClassifier(VideoFeatureExtractor):
 
         self.cls_proj = nn.Sequential(
             LayerNorm(self.decoder.embed_dim),
-            nn.Linear(self.decoder.embed_dim, 2, bias=False)
+            nn.Dropout(),
+            nn.Linear(
+                self.decoder.embed_dim,
+                2,
+                bias=False
+            )
         )
 
     def forward(self, *args, **kargs):
@@ -461,7 +510,11 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
         num_layers: int,
         num_frames: int,
         num_queries: int = 1,
-        architecture='ViT-B/16'
+        architecture: str = 'ViT-B/16',
+        prompt_mode: PromptMode = PromptMode.NONE,
+        prompt_num: int = 0,
+        prompt_layers: int = 0,
+        prompt_dropout: float = 0
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -469,7 +522,11 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
             num_layers=num_layers,
             num_frames=num_frames,
             num_queries=num_queries,
-            architecture=architecture
+            architecture=architecture,
+            prompt_mode=prompt_mode,
+            prompt_num=prompt_num,
+            prompt_layers=prompt_layers,
+            prompt_dropout=prompt_dropout
         )
         self.model = BinaryLinearClassifier(**params)
 

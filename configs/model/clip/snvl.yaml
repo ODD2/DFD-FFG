@@ -3,5 +3,5 @@ model:
   init_args:
     num_layers: 6
     num_frames: 10
-    num_queries: 2
+    num_queries: 1
     architecture: ViT-B/16
