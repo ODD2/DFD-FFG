@@ -198,6 +198,7 @@ class DeepFakeDataModule(pl.LightningDataModule):
         # generic parameters
         self.transform = lambda x: x
         self.batch_size = batch_size
+        self.accum_batch = 1
         self.num_workers = num_workers
 
         # dataset metadata
@@ -214,30 +215,40 @@ class DeepFakeDataModule(pl.LightningDataModule):
         self._test_dataset = None
         self._predict_dataset = None
 
-    def overwrite_parameters(self, **kargs):
+    def overwrite_params(self, force=False, **kargs):
         for k, v in kargs.items():
             cur_v = getattr(self, k)
-            if (type(cur_v) == type(None)):
+            if not force and not type(cur_v) == type(None):
+                logging.debug(f"Parameter '{k}' has specified value '{cur_v}', ignore overwrite '{v}'.")
+            else:
                 logging.debug(f"Overwrite parameter '{k}' with value '{v}'")
                 setattr(self, k, v)
-            else:
-                logging.debug(f"Parameter '{k}' has specified value '{cur_v}', ignore overwrite '{v}'.")
 
-    def create_dataloader(self, dataset, shuffle=False):
+    def create_dataloader(self, dataset, train=False):
         if (type(dataset) == type(None)):
             return None
         else:
-            return DataLoader(
-                dataset,
+            params = dict(
+                dataset=dataset,
                 batch_size=self.batch_size,
                 num_workers=self.num_workers,
-                shuffle=shuffle,
+                shuffle=False,
                 collate_fn=dataset.collate_fn,
                 pin_memory=True
             )
 
+            if train:
+                assert (self.batch_size >= self.accum_batch)
+                params["batch_size"] = int(self.batch_size/self.accum_batch)
+                params["shuffle"] = True
+
+            return DataLoader(**params)
+
     def affine_model(self, model):
         self.transform = model.transform
+
+    def affine_trainer(self, trainer):
+        self.accum_batch = trainer.accumulate_grad_batches
 
     def prepare_data(self):
         raise NotImplementedError()
@@ -246,10 +257,10 @@ class DeepFakeDataModule(pl.LightningDataModule):
         raise NotImplementedError()
 
     def train_dataloader(self):
-        return self.create_dataloader(self._train_dataset, shuffle=True)
+        return self.create_dataloader(self._train_dataset, train=True)
 
     def val_dataloader(self):
-        return self.create_dataloader(self._val_dataset, shuffle=True)
+        return self.create_dataloader(self._val_dataset)
 
     def test_dataloader(self):
         return self.create_dataloader(self._test_dataset)
@@ -278,6 +289,14 @@ class ODDataModule(pl.LightningDataModule):
         ]:
             dtm.affine_model(model)
 
+    def affine_trainer(self, trainer):
+        for dtm in [
+            *self._train_datamodules,
+            *self._test_datamodules,
+            *self._val_datamodules
+        ]:
+            dtm.affine_trainer(trainer)
+
     def prepare_data(self):
         for dtm in [
             *self._train_datamodules,
@@ -285,6 +304,14 @@ class ODDataModule(pl.LightningDataModule):
             *self._val_datamodules
         ]:
             dtm.prepare_data()
+
+    def overwrite_params(self, force=False, **kargs):
+        for dtm in [
+            *self._train_datamodules,
+            *self._test_datamodules,
+            *self._val_datamodules
+        ]:
+            dtm.overwrite_params(force=force, **kargs)
 
     def setup(self, stage: str):
         if stage == "fit":
@@ -352,9 +379,4 @@ class ODDeepFakeDataModule(ODDataModule):
             num_frames=num_frames,
             clip_duration=clip_duration
         )
-        for dtm in [
-            *self._train_datamodules,
-            *self._test_datamodules,
-            *self._val_datamodules
-        ]:
-            dtm.overwrite_parameters(**global_defaults)
+        self.overwrite_params(force=False, **global_defaults)

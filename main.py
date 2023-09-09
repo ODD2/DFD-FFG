@@ -31,9 +31,6 @@ def configure_cli():
         save_config_kwargs={
             'config_filename': 'setting.yaml'
         },
-        parser_kwargs={
-            "parser_mode": "omegaconf"
-        },
         auto_configure_optimizers=False,
         seed_everything_default=1019
     )
@@ -49,8 +46,9 @@ def cli_main():
     # monitor model gradient and parameter histograms
     cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False)
 
-    # Load datasets
+    # Load & configure datasets
     cli.datamodule.affine_model(cli.model)
+    cli.datamodule.affine_trainer(cli.trainer)
 
     # run
     cli.trainer.fit(

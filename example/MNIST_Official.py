@@ -80,4 +80,4 @@ test_loader = utils.data.DataLoader(test_set)
 trainer = pl.Trainer(limit_train_batches=0.01, max_epochs=1, callbacks=[EarlyStopping(monitor="val_loss", mode="min")])
 trainer.fit(model=autoencoder, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
-trainer.test(model=autoencoder, dataloaders=test_loader)  # TODO: train_dataloaders vs dataloaders?
+trainer.test(model=autoencoder, dataloaders=test_loader)

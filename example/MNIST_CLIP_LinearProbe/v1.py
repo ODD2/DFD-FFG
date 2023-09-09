@@ -141,7 +141,7 @@ trainer.fit(
     ckpt_path=checkpoint
 )
 
-trainer.test(classifier, mnist_data)  # TODO: train_dataloaders vs dataloaders?
+trainer.test(classifier, mnist_data)
 
 wandb_logger.experiment.unwatch(classifier)
 wandb_logger.finalize("success")

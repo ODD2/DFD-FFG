@@ -4,8 +4,5 @@ model:
     prompt_num: 10
     prompt_layers: 6
     prompt_dropout: 0.2
-data:
-  init_args:
-    batch_size: 5
 trainer:
   accumulate_grad_batches: 3
