@@ -31,7 +31,7 @@ def configure_cli():
         save_config_kwargs={
             'config_filename': 'setting.yaml'
         },
-        auto_configure_optimizers=False,
+        auto_configure_optimizers=True,
         seed_everything_default=1019
     )
 

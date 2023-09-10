@@ -54,11 +54,6 @@ class ODClassifier(pl.LightningModule):
     def evaluate(self, batch, pack=True):
         return self.shared_step(batch, 'eval')
 
-    # TODO: isolate optimizer and lr_scheduler configurations
-    def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=1e-4)
-        return optimizer
-
 
 class ODBinaryMetricClassifier(ODClassifier):
     def __init__(self):

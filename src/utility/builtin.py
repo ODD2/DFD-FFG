@@ -1,4 +1,5 @@
 import os
+import torch
 import lightning as pl
 
 from typing import Optional
@@ -7,7 +8,7 @@ from lightning.pytorch.trainer.trainer import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from lightning.pytorch.cli import LightningCLI, SaveConfigCallback
-from lightning.pytorch.callbacks import EarlyStopping
+from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
 
 
 class ODLightningCLI(LightningCLI):
@@ -25,6 +26,17 @@ class ODLightningCLI(LightningCLI):
                 'checkpoint.save_top_k': 1,
             }
         )
+
+        parser.add_lightning_class_args(LearningRateMonitor, "lr_monitor")
+        parser.set_defaults(
+            {
+                'lr_monitor.log_momentum': True,
+                'lr_monitor.logging_interval': 'step'
+            }
+        )
+
+        parser.add_optimizer_args(torch.optim.AdamW)
+        parser.add_lr_scheduler_args(torch.optim.lr_scheduler.LinearLR)
 
 
 class ODTrainer(Trainer):
