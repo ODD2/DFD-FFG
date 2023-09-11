@@ -1,0 +1,4 @@
+model:
+  class_path: src.model.clip.lprobe.CLIPBinaryLinearProb
+  init_args:
+    architecture: RN50

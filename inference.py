@@ -58,7 +58,7 @@ def main(params):
 
     # setup model
     model = cli.model
-    model = model.load_from_checkpoint(params.ckpt_path)
+    model = model.load_from_checkpoint(params.ckpt_path, strict=False)
     model.eval()
     device = model.device
 
@@ -80,24 +80,27 @@ def main(params):
         dataset = dataloader.dataset
         stats[dts_name] = {"label": [], "prob": [], "meta": []}
         for batch in tqdm(dataloader):
-            batch = [
-                _d.to(device)
-                if type(_d) == torch.Tensor else
-                _d
-                for _d in batch
-            ]
+            x, y, z = batch["xyz"]
+            indices = batch["indices"]
+            x = x.to(device)
+            z = {
+                _k: z[_k].to(device)
+                for _k in z
+            }
 
             probs = []
-            labels = []
-            indices = []
-            for beg in range(0, len(batch[0]), N):
-                result = model.evaluate([_d[beg:beg+N]for _d in batch])
-                probs.append(result["logits"].softmax(dim=-1).detach().cpu())
-                labels.append(result["labels"].detach().cpu())
-                indices.append(result["indices"].detach().cpu())
+            for beg in range(0, x.shape[0], N):
+                results = model.evaluate(
+                    x[beg:beg+N],
+                    **{
+                        _k: z[_k][beg:beg+N]
+                        for _k in z
+                    }
+                )
+                probs.append(results["logits"].softmax(dim=-1).detach().cpu())
             prob = torch.cat(probs).mean(dim=0)
-            label = torch.cat(labels)[0]
-            index = torch.cat(indices)[0]
+            label = y[0]
+            index = indices[0]
 
             # statistic recordings
             stats[dts_name]["label"].append(label.item())

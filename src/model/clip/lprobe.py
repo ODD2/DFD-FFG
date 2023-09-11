@@ -47,10 +47,10 @@ class CLIPLinearProbe(ODClassifier):
 
 
 class CLIPBinaryLinearProb(ODBinaryMetricClassifier):
-    def __init__(self):
+    def __init__(self, architecture="ViT-B/16"):
         super().__init__()
         self.save_hyperparameters()
-        self.model = LinearProbe(output_dim=2)
+        self.model = LinearProbe(output_dim=2, architecture=architecture)
 
     @property
     def transform(self):

@@ -1,0 +1,5 @@
+data:
+  init_args:
+    batch_size: 30
+optimizer:
+  lr: 0.005

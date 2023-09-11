@@ -4,8 +4,6 @@ import pickle
 import logging
 import torch.nn as nn
 import src.clip as CLIP
-
-
 from collections import OrderedDict
 from typing import List, Optional, Dict
 from src.clip.model import LayerNorm, QuickGELU
@@ -321,9 +319,9 @@ class VideoAttrExtractor(nn.Module):
         # pass throught for attributes
         if (len(x.shape) > 4):
             b, t = x.shape[:2]
-            self.model(x.flatten(0, 1))
+            embeds = self.model(x.flatten(0, 1)).unflatten(0, (b, t))
         else:
-            self.model(x)
+            embeds = self.model(x)
         # retrieve all layer attributes
         layer_attrs = []
         for blk in self.model.transformer.resblocks:
@@ -335,7 +333,10 @@ class VideoAttrExtractor(nn.Module):
                 else:
                     attrs[attr_name] = attrs[attr_name]
             layer_attrs.append(attrs)
-        return layer_attrs
+        return dict(
+            layer_attrs=layer_attrs,
+            embeds=embeds
+        )
 
     def train(self, mode=True):
         super().train(mode)
@@ -458,49 +459,55 @@ class VideoFeatureExtractor(nn.Module):
         return self.encoder.model.input_resolution
 
     def forward(self, x, masks, *args, **kargs):
-        return self.decoder(self.encoder(x), masks)
+        encode_data = self.encoder(x)
+        decode_data = self.decoder(encode_data["layer_attrs"], masks)
+        video_features = decode_data.pop("embeds")
+        frame_features = encode_data["embeds"]
+        return dict(
+            video_features=video_features,
+            frame_features=frame_features,
+            **decode_data
+        )
 
 
 class BinaryLinearClassifier(VideoFeatureExtractor):
     def __init__(
         self,
+        with_frame=False,
         *args,
         **kargs,
     ):
         super().__init__(*args, **kargs)
-
-        self.cls_proj = nn.Sequential(
-            LayerNorm(self.decoder.embed_dim),
-            nn.Dropout(),
-            nn.Linear(
-                self.decoder.embed_dim,
-                2,
-                bias=False
+        self.with_frame = with_frame
+        create_proj_module = (
+            lambda:  nn.Sequential(
+                LayerNorm(self.decoder.embed_dim),
+                nn.Dropout(),
+                nn.Linear(
+                    self.decoder.embed_dim,
+                    2,
+                    bias=False
+                )
             )
         )
+        if (self.with_frame):
+            self.cls_proj_video = create_proj_module()
+            self.cls_proj_frame = create_proj_module()
+        else:
+            self.cls_proj_video = create_proj_module()
 
     def forward(self, *args, **kargs):
         result = super().forward(*args, **kargs)
-        result["logits"] = self.cls_proj(result["embeds"])
-        return result
+        if (self.with_frame):
+            result["logits"] = (
+                self.cls_proj_video(result["video_features"]) +
+                self.cls_proj_frame(result["frame_features"][:, 0])
+            ) / 2
+        else:
+            result["logits"] = (
+                self.cls_proj_video(result["video_features"])
+            )
 
-
-class BinaryTextAffinityClassifier(VideoFeatureExtractor):
-    def __init__(
-        self,
-        *args,
-        architecture="ViT-B/16",
-        **kargs
-    ):
-        super().__init__(*args, architecture=architecture, **kargs)
-        self.cls_head = TextAffinityHead(
-            out_dim=2,
-            architecture=architecture
-        )
-
-    def forward(self, *args, **kargs):
-        result = super().forward(*args, **kargs)
-        result["logits"] = self.cls_head(result["embeds"])
         return result
 
 
@@ -514,7 +521,8 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
         prompt_mode: PromptMode = PromptMode.NONE,
         prompt_num: int = 0,
         prompt_layers: int = 0,
-        prompt_dropout: float = 0
+        prompt_dropout: float = 0,
+        with_frame: bool = False
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -526,7 +534,8 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
             prompt_mode=prompt_mode,
             prompt_num=prompt_num,
             prompt_layers=prompt_layers,
-            prompt_dropout=prompt_dropout
+            prompt_dropout=prompt_dropout,
+            with_frame=with_frame
         )
         self.model = BinaryLinearClassifier(**params)
 
@@ -635,6 +644,25 @@ class CLIPBinaryVideoLearnerFFG(CLIPBinaryVideoLearner):
                 batch_size=result["logits"].shape[0]
             )
             result["loss"] += cls_sim
+        return result
+
+
+class BinaryTextAffinityClassifier(VideoFeatureExtractor):
+    def __init__(
+        self,
+        *args,
+        architecture="ViT-B/16",
+        **kargs
+    ):
+        super().__init__(*args, architecture=architecture, **kargs)
+        self.cls_head = TextAffinityHead(
+            out_dim=2,
+            architecture=architecture
+        )
+
+    def forward(self, *args, **kargs):
+        result = super().forward(*args, **kargs)
+        result["logits"] = self.cls_head(result["video_features"])
         return result
 
 

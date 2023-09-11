@@ -37,7 +37,7 @@ class ODClassifier(pl.LightningModule):
         indices = batch["indices"]
         dts_name = batch["dts_name"]
         logits = self.model(x, **z)
-        loss = nn.functional.cross_entropy(x, y)
+        loss = nn.functional.cross_entropy(logits, y)
         self.log(
             f"{stage}/{dts_name}/loss",
             loss,
@@ -51,8 +51,8 @@ class ODClassifier(pl.LightningModule):
             "indices": indices
         }
 
-    def evaluate(self, batch, pack=True):
-        return self.shared_step(batch, 'eval')
+    def evaluate(self, x, **kargs):
+        return self.model(x, **kargs)
 
 
 class ODBinaryMetricClassifier(ODClassifier):

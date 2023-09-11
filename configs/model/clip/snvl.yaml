@@ -5,3 +5,4 @@ model:
     num_frames: 10
     num_queries: 1
     architecture: ViT-B/16
+    with_frame: true
