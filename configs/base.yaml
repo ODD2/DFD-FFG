@@ -68,7 +68,7 @@ checkpoint:
   save_on_train_epoch_end: null
 lr_monitor:
   logging_interval: epoch
-  log_momentum: true
+  log_momentum: false
 optimizer:
   lr: 0.0005
   betas:
