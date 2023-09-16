@@ -12,6 +12,9 @@ class ODClassifier(pl.LightningModule):
         self.log = partial(self.log, add_dataloader_idx=False)
         self.model = None
 
+    def forward(self, *args, **kargs):
+        return self.model(*args, **kargs)
+
     @property
     def transform(self):
         raise NotImplementedError()
@@ -36,7 +39,7 @@ class ODClassifier(pl.LightningModule):
         x, y, z = batch["xyz"]
         indices = batch["indices"]
         dts_name = batch["dts_name"]
-        logits = self.model(x, **z)
+        logits = self(x, **z)
         loss = nn.functional.cross_entropy(logits, y)
         self.log(
             f"{stage}/{dts_name}/loss",

@@ -553,7 +553,7 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
         dts_name = batch["dts_name"]
         names = batch["names"]
 
-        output = self.model(x, **z)
+        output = self(x, **z)
         logits = output["logits"]
         # classification loss
         cls_loss = nn.functional.cross_entropy(logits, y, reduction="none")
