@@ -5,7 +5,6 @@ import warnings
 import lightning.pytorch as pl
 
 from src.utility.builtin import ODTrainer,  ODLightningCLI
-
 torch.set_float32_matmul_precision('high')
 
 
@@ -55,6 +54,18 @@ def cli_main():
         cli.model,
         datamodule=cli.datamodule
     )
+
+    # after training:
+    # 1. unwatch model
+    cli.trainer.logger.experiment.unwatch(cli.model)
+    # 2. save the config
+    cli.trainer.logger.experiment.save(
+        glob_str=os.path.join(cli.trainer.log_dir, 'setting.yaml'),
+        base_path=cli.trainer.log_dir,
+        policy="now"
+    )
+
+    # test the best model.
     cli.trainer.test(
         cli.model,
         datamodule=cli.datamodule,
@@ -62,15 +73,7 @@ def cli_main():
         ckpt_path="best"
     )
 
-    # save the running config
-    cli.trainer.logger.experiment.save(
-        glob_str=os.path.join(cli.trainer.log_dir, 'setting.yaml'),
-        base_path=cli.trainer.log_dir,
-        policy="now"
-    )
-
-    # ending
-    cli.trainer.logger.experiment.unwatch(cli.model)
+    # finally
     cli.trainer.logger.experiment.finish()
 
 
