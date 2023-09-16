@@ -43,7 +43,7 @@ trainer:
 early_stop:
   monitor: "valid/FFPP/auc"
   min_delta: 0.0
-  patience: 10
+  patience: 20
   verbose: false
   mode: max
   strict: true
@@ -69,6 +69,19 @@ checkpoint:
 lr_monitor:
   logging_interval: epoch
   log_momentum: false
+progress_bar:
+  refresh_rate: 1
+  leave: false
+  theme:
+    description: '#8250E5'
+    progress_bar: '#7FFF00'
+    progress_bar_finished: '#7FFF00'
+    progress_bar_pulse: '#7FFF00'
+    batch_progress: '#5398FE'
+    time: grey54
+    processing_speed: grey70
+    metrics: white
+  console_kwargs: null
 optimizer:
   lr: 0.0005
   betas:

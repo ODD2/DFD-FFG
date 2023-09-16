@@ -8,7 +8,7 @@ from lightning.pytorch.trainer.trainer import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from lightning.pytorch.cli import LightningCLI, SaveConfigCallback
-from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
+from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, RichProgressBar
 
 
 class ODLightningCLI(LightningCLI):
@@ -34,6 +34,8 @@ class ODLightningCLI(LightningCLI):
                 'lr_monitor.logging_interval': 'step'
             }
         )
+
+        parser.add_lightning_class_args(RichProgressBar, "progress_bar")
 
         parser.add_optimizer_args(torch.optim.AdamW)
         parser.add_lr_scheduler_args(torch.optim.lr_scheduler.LinearLR)
