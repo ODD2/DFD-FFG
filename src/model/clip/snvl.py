@@ -223,8 +223,8 @@ class ViTSideNetworkVideoLearner(nn.Module):
         self.ln_post.load_state_dict(reference_ln_post.state_dict())
 
         if (type(reference_proj) == type(None)):
-            self.proj = nn.Parameter(torch.eye(self.embed_dim))
             self.embed_dim = width
+            self.proj = nn.Parameter(torch.eye(self.embed_dim))
         else:
             self.proj = nn.Parameter(reference_proj.data)
             self.embed_dim = self.proj.shape[1]
@@ -480,21 +480,21 @@ class BinaryLinearClassifier(VideoFeatureExtractor):
         super().__init__(*args, **kargs)
         self.with_frame = with_frame
         create_proj_module = (
-            lambda:  nn.Sequential(
-                LayerNorm(self.decoder.embed_dim),
+            lambda x:  nn.Sequential(
+                LayerNorm(x),
                 nn.Dropout(),
                 nn.Linear(
-                    self.decoder.embed_dim,
+                    x,
                     2,
                     bias=False
                 )
             )
         )
         if (self.with_frame):
-            self.cls_proj_video = create_proj_module()
-            self.cls_proj_frame = create_proj_module()
+            self.cls_proj_video = create_proj_module(self.decoder.embed_dim)
+            self.cls_proj_frame = create_proj_module(512)
         else:
-            self.cls_proj_video = create_proj_module()
+            self.cls_proj_video = create_proj_module(self.decoder.embed_dim)
 
     def forward(self, *args, **kargs):
         result = super().forward(*args, **kargs)
