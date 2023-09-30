@@ -30,6 +30,10 @@ class LinearProbe(nn.Module):
             self.model.eval()
         return self
 
+    @property
+    def n_px(self):
+        return self.model.visual.input_resolution
+
 
 class CLIPLinearProbe(ODClassifier):
     def __init__(self, output_dim=10):

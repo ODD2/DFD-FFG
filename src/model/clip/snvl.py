@@ -8,7 +8,13 @@ from collections import OrderedDict
 from typing import List, Optional, Dict
 from src.clip.model import LayerNorm, QuickGELU
 from src.model.base import ODClassifier, ODBinaryMetricClassifier
+from src.model.clip import FrameAttrExtractor
 from src.clip.model_vpt import PromptMode
+
+
+def attenuate_pretrained_module_grads(module, in_grad, out_grad):
+    for p in module.parameters():
+        p.grad *= 0.1
 
 
 class MultiheadAttention(nn.Module):
@@ -26,11 +32,12 @@ class MultiheadAttention(nn.Module):
     """
 
     def __init__(
-            self,
-            num_frames,
-            embed_dim,
-            n_head,
-            attn_record=False
+        self,
+        num_frames,
+        embed_dim,
+        n_head,
+        reference_module,
+        attn_record=False
     ):
         super().__init__()
         self.num_frames = num_frames
@@ -52,7 +59,9 @@ class MultiheadAttention(nn.Module):
 
         self.n_act = len(self.activations)
         self.in_proj = nn.Linear(embed_dim, self.n_act * embed_dim, bias=False)
-        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        # TODO: For reproduction, remember to remove both weight loading and bias=True.
+        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=True)
+        self.out_proj.load_state_dict(reference_module.out_proj.state_dict())
 
         self.embed_dim = embed_dim
         self.n_head = n_head
@@ -98,12 +107,18 @@ class ResidualAttentionBlock(nn.Module):
         d_model: int,
         num_frames: int,
         block_index: int,
+        num_queries: int,
         layer_indices: List[int],
-        reference_layers: List[nn.Module]
+        reference_layers: List[nn.Module],
     ):
         super().__init__()
         self.in_drop = nn.Dropout()
-        self.attn = MultiheadAttention(num_frames, d_model, n_head)
+        self.attn = MultiheadAttention(
+            num_frames=num_frames,
+            embed_dim=d_model,
+            n_head=n_head,
+            reference_module=reference_layers[block_index].attn
+        )
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(
             OrderedDict([
@@ -154,7 +169,15 @@ class Transformer(nn.Module):
     https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/model.py#L195
     """
 
-    def __init__(self, width: int, heads: int, num_frames: int, layer_indices: List[int], reference_layers):
+    def __init__(
+        self,
+        width: int,
+        heads: int,
+        num_frames: int,
+        layer_indices: List[int],
+        reference_layers,
+        num_queries: int
+    ):
         super().__init__()
         self.width = width
         self.resblocks = []
@@ -166,7 +189,8 @@ class Transformer(nn.Module):
                     num_frames=num_frames,
                     block_index=block_index,
                     layer_indices=layer_indices,
-                    reference_layers=reference_layers
+                    reference_layers=reference_layers,
+                    num_queries=num_queries
                 )
             )
 
@@ -217,7 +241,8 @@ class ViTSideNetworkVideoLearner(nn.Module):
             heads,
             num_frames,
             layer_indices=self.layer_indices,
-            reference_layers=reference_layers
+            reference_layers=reference_layers,
+            num_queries=num_queries
         )
         self.ln_post = LayerNorm(width)
         self.ln_post.load_state_dict(reference_ln_post.state_dict())
@@ -282,67 +307,6 @@ class ViTSideNetworkVideoLearner(nn.Module):
             "embeds": x,
             "qs": layer_qs
         }
-
-
-class VideoAttrExtractor(nn.Module):
-    def __init__(
-        self,
-        architecture,
-        prompt_mode,
-        prompt_num,
-        prompt_layers,
-        prompt_dropout
-    ):
-        super().__init__()
-        self.model, self.transform = CLIP.load(
-            architecture,
-            "cpu",
-            prompt_mode=prompt_mode,
-            prompt_num=prompt_num,
-            prompt_layers=prompt_layers,
-            prompt_dropout=prompt_dropout,
-        )
-        self.model = self.model.visual.float()
-        self.model.requires_grad_(False)
-        for param in self.model.prompt_parameters():
-            param.requires_grad_(True)
-
-    @property
-    def n_px(self):
-        return self.model.input_resolution
-
-    @property
-    def n_patch(self):
-        return self.model.input_resolution // self.model.patch_size
-
-    def forward(self, x):
-        # pass throught for attributes
-        if (len(x.shape) > 4):
-            b, t = x.shape[:2]
-            embeds = self.model(x.flatten(0, 1)).unflatten(0, (b, t))
-        else:
-            embeds = self.model(x)
-        # retrieve all layer attributes
-        layer_attrs = []
-        for blk in self.model.transformer.resblocks:
-            attrs = blk.attn.pop_attr()
-            # restore temporal dimension
-            for attr_name in attrs:
-                if (len(x.shape) > 4):
-                    attrs[attr_name] = attrs[attr_name].unflatten(0, (b, t))
-                else:
-                    attrs[attr_name] = attrs[attr_name]
-            layer_attrs.append(attrs)
-        return dict(
-            layer_attrs=layer_attrs,
-            embeds=embeds
-        )
-
-    def train(self, mode=True):
-        super().train(mode)
-        if (mode):
-            self.model.eval()
-        return self
 
 
 class TextAffinityHead(nn.Module):
@@ -429,15 +393,17 @@ class VideoFeatureExtractor(nn.Module):
         prompt_mode,
         prompt_num,
         prompt_layers,
-        prompt_dropout
+        prompt_dropout,
+        text_embed=True
     ):
         super().__init__()
-        self.encoder = VideoAttrExtractor(
+        self.encoder = FrameAttrExtractor(
             architecture=architecture,
             prompt_mode=prompt_mode,
             prompt_num=prompt_num,
             prompt_layers=prompt_layers,
             prompt_dropout=prompt_dropout,
+            text_embed=text_embed
         )
         self.decoder = ViTSideNetworkVideoLearner(
             width=self.encoder.model.transformer.width,
@@ -447,7 +413,11 @@ class VideoFeatureExtractor(nn.Module):
             num_queries=num_queries,
             reference_layers=self.encoder.model.transformer.resblocks,
             reference_ln_post=self.encoder.model.ln_post,
-            reference_proj=self.encoder.model.proj
+            reference_proj=(
+                self.encoder.model.proj
+                if text_embed else
+                None
+            )
         )
 
     @property
@@ -492,7 +462,7 @@ class BinaryLinearClassifier(VideoFeatureExtractor):
         )
         if (self.with_frame):
             self.cls_proj_video = create_proj_module(self.decoder.embed_dim)
-            self.cls_proj_frame = create_proj_module(512)
+            self.cls_proj_frame = create_proj_module(self.encoder.embed_dim)
         else:
             self.cls_proj_video = create_proj_module(self.decoder.embed_dim)
 
