@@ -1,0 +1,11 @@
+model:
+  class_path: src.model.clip.ftfe.LinearMeanVideoLearner
+  init_args:
+    architecture: ViT-B/16
+    prompt_mode: DEEPC
+    prompt_num: 10
+    prompt_layers: 6
+    prompt_dropout: 0.2
+    text_embed: false
+trainer:
+  accumulate_grad_batches: 3
