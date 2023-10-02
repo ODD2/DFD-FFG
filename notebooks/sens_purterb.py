@@ -1,7 +1,7 @@
 
 import os
 import sys
-import init
+import notebooks.tools as tools
 import cv2
 import torch
 import pickle
@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import torchvision.transforms as T
 
 from tqdm import tqdm
-from init import extract_features
+from notebooks.tools import extract_features
 from src.model.clip.snvl import CLIPVideoAttrExtractor
 from src.dataset.ffpp import FFPP, FFPPSampleStrategy, FFPPAugmentation
 
@@ -51,7 +51,7 @@ def sensitivity_for_perturbations(
     # storage for patch-wise cosine distance of attention attributes
     storage = [
         {
-            k: torch.zeros(patch_num*patch_num)
+            k: torch.zeros(patch_num * patch_num)
             for k in attributes
         }
         for _ in range(encoder.model.transformers)

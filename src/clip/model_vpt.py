@@ -189,7 +189,8 @@ class MultiheadAttentionAttrExtract(nn.Module):
         n_head,
         prompt_num: int = 0,
         prompt_mode: PromptMode = PromptMode.NONE,
-        attn_record=False
+        attn_record=False,
+        ignore_attr=False
     ):
         super().__init__()
 
@@ -205,11 +206,10 @@ class MultiheadAttentionAttrExtract(nn.Module):
 
         # recordings
         self.attn_record = attn_record
+        self.ignore_attr = ignore_attr
         self.aff = None
 
     def pop_attr(self):
-        if (not self.attr):
-            return None
         ret = self.get_attr()
         self.attr.clear()
         return ret
@@ -218,16 +218,17 @@ class MultiheadAttentionAttrExtract(nn.Module):
         return {k: self.attr[k] for k in self.attr}
 
     def set_attr(self, q, k, v, out):
-        if (self.prompt_mode == PromptMode.NONE):
-            tokens = q.shape[1]
-        else:
-            tokens = q.shape[1] - self.prompt_num
-        self.attr = dict(
-            q=q[:, :tokens],
-            k=k[:, :tokens],
-            v=v[:, :tokens],
-            out=out[:, :tokens]
-        )
+        if not self.ignore_attr:
+            if (self.prompt_mode == PromptMode.NONE):
+                tokens = q.shape[1]
+            else:
+                tokens = q.shape[1] - self.prompt_num
+            self.attr = dict(
+                q=q[:, :tokens],
+                k=k[:, :tokens],
+                v=v[:, :tokens],
+                out=out[:, :tokens]
+            )
 
     def forward(self, x):
         self.pop_attr()
@@ -261,7 +262,8 @@ class ResidualAttentionBlock(nn.Module):
         prompt_num: int = 0,
         prompt_mode: PromptMode = PromptMode.NONE,
         prompt_dropout: float = 0,
-        attn_record: bool = False
+        attn_record: bool = False,
+        ignore_attr: bool = False,
     ):
         super().__init__()
         # modified
@@ -270,7 +272,8 @@ class ResidualAttentionBlock(nn.Module):
             n_head,
             prompt_num=prompt_num,
             prompt_mode=prompt_mode,
-            attn_record=attn_record
+            attn_record=attn_record,
+            ignore_attr=ignore_attr
         )
 
         self.ln_1 = LayerNorm(d_model)
@@ -342,7 +345,8 @@ class Transformer(nn.Module):
         prompt_mode: PromptMode = PromptMode.NONE,
         prompt_layers: int = 0,
         prompt_dropout: float = 0,
-        attn_record: bool = False
+        attn_record: bool = False,
+        ignore_attr: bool = False
     ):
         super().__init__()
         self.width = width
@@ -357,7 +361,8 @@ class Transformer(nn.Module):
                 heads,
                 attn_mask,
                 attn_record=attn_record,
-                **dict(
+                ignore_attr=ignore_attr,
+                ** dict(
                     prompt_num=(
                         prompt_num
                         if i < prompt_layers else
@@ -443,7 +448,8 @@ class VisionTransformer(nn.Module):
         prompt_mode: PromptMode = PromptMode.NONE,
         prompt_layers: int = 0,
         prompt_dropout: float = 0.0,
-        attn_record: bool = False
+        attn_record: bool = False,
+        ignore_attr: bool = False
     ):
         super().__init__()
         self.input_resolution = input_resolution
@@ -467,7 +473,8 @@ class VisionTransformer(nn.Module):
             prompt_mode=prompt_mode,
             prompt_layers=prompt_layers,
             prompt_dropout=prompt_dropout,
-            attn_record=attn_record
+            attn_record=attn_record,
+            ignore_attr=ignore_attr
         )
 
         self.ln_post = LayerNorm(width)

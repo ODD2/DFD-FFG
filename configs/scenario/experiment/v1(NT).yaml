@@ -11,3 +11,4 @@ data:
       train_datamodules:
         - init_args:
             ratio: 0.3
+            df_types: ["REAL","NT"]

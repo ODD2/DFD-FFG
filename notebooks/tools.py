@@ -1,8 +1,6 @@
-import torch
 import os
 import sys
-os.chdir(os.environ["PROJECT_ROOT"])
-sys.path.append(os.environ["PROJECT_ROOT"])
+import torch
 
 
 @torch.inference_mode()

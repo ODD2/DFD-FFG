@@ -1,7 +1,7 @@
 # %%
 import os
 import sys
-import init
+import notebooks.tools as tools
 import cv2
 import torch
 import pickle
@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import torchvision.transforms as T
 
 from tqdm import tqdm
-from init import extract_features
+from notebooks.tools import extract_features
 from src.model.clip.snvl import CLIPVideoAttrExtractor
 from src.dataset.ffpp import FFPP, FFPPSampleStrategy, FFPPAugmentation
 from notebooks.fetch_facial_feature import fetch_semantic_features

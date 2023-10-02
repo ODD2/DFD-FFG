@@ -394,7 +394,8 @@ class VideoFeatureExtractor(nn.Module):
         prompt_num,
         prompt_layers,
         prompt_dropout,
-        text_embed=True
+        text_embed=True,
+        attn_record=False
     ):
         super().__init__()
         self.encoder = FrameAttrExtractor(
@@ -403,7 +404,8 @@ class VideoFeatureExtractor(nn.Module):
             prompt_num=prompt_num,
             prompt_layers=prompt_layers,
             prompt_dropout=prompt_dropout,
-            text_embed=text_embed
+            text_embed=text_embed,
+            attn_record=attn_record
         )
         self.decoder = ViTSideNetworkVideoLearner(
             width=self.encoder.model.transformer.width,
@@ -450,7 +452,7 @@ class BinaryLinearClassifier(VideoFeatureExtractor):
         super().__init__(*args, **kargs)
         self.with_frame = with_frame
         create_proj_module = (
-            lambda x:  nn.Sequential(
+            lambda x: nn.Sequential(
                 LayerNorm(x),
                 nn.Dropout(),
                 nn.Linear(

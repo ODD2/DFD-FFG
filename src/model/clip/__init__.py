@@ -10,7 +10,9 @@ class FrameAttrExtractor(nn.Module):
         prompt_num,
         prompt_layers,
         prompt_dropout,
-        text_embed
+        text_embed,
+        ignore_attr=False,
+        attn_record=False
     ):
         super().__init__()
         self.model, self.transform = CLIP.load(
@@ -20,6 +22,8 @@ class FrameAttrExtractor(nn.Module):
             prompt_num=prompt_num,
             prompt_layers=prompt_layers,
             prompt_dropout=prompt_dropout,
+            ignore_attr=ignore_attr,
+            attn_record=attn_record
         )
         self.model = self.model.visual.float()
 
