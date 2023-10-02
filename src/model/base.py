@@ -80,7 +80,7 @@ class ODBinaryMetricClassifier(ODClassifier):
     # shared procedures
     def shared_metric_update_procedure(self, result):
         # save metrics
-        logits = result['logits'].detach().cpu().softmax(dim=-1)
+        logits = result['logits'].detach().softmax(dim=-1).cpu()
         labels = result['labels'].detach().cpu()
         self.get_metric(result['dts_name'], 'auc').update(logits[:, 1], labels)
         self.get_metric(result['dts_name'], 'acc').update(logits[:, 1], labels)
