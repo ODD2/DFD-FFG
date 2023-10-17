@@ -12,7 +12,8 @@ class FrameAttrExtractor(nn.Module):
         prompt_dropout,
         text_embed,
         ignore_attr=False,
-        attn_record=False
+        attn_record=False,
+        pretrain=None
     ):
         super().__init__()
         self.model, self.transform = CLIP.load(
@@ -32,6 +33,9 @@ class FrameAttrExtractor(nn.Module):
             self.feat_dim = self.model.transformer.width
         else:
             self.feat_dim = self.model.output_dim
+
+        if (pretrain):
+            self.model.load_state_dict(pretrain)
 
         self.model.requires_grad_(False)
         for param in self.model.prompt_parameters():

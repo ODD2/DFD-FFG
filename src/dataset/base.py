@@ -239,8 +239,9 @@ class DeepFakeDataModule(pl.LightningDataModule):
 
             if train:
                 assert (self.batch_size >= self.accum_batch)
-                params["batch_size"] = int(self.batch_size/self.accum_batch)
+                params["batch_size"] = int(self.batch_size / self.accum_batch)
                 params["shuffle"] = True
+                params["drop_last"] = True
 
             return DataLoader(**params)
 
@@ -314,7 +315,7 @@ class ODDataModule(pl.LightningDataModule):
             dtm.overwrite_params(force=force, **kargs)
 
     def setup(self, stage: str):
-        if stage == "fit":
+        if stage == "fit" or stage == "validate":
             for dtm in [
                 *self._train_datamodules,
                 *self._val_datamodules

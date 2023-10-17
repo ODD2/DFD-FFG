@@ -26,6 +26,7 @@ class FFPPAugmentation(IntFlag):
     COMP = auto()
     DSCALE = auto()
     SHARPEN = auto()
+    RRC = auto()
 
 
 class FFPP(DeepFakeDataset):
@@ -165,6 +166,24 @@ class FFPP(DeepFakeDataset):
                         alb.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=1)
                     ],
                     p=1.
+                )
+            elif FFPPAugmentation.RRC in self.augmentations:
+                self.video_augmentation = alb.ReplayCompose(
+                    [
+                        alb.RandomResizedCrop(
+                            self.n_px, self.n_px, scale=(0.5, 0.75), ratio=(1, 1), p=0.5
+                        ),
+                        alb.Compose(
+                            [
+                                alb.RandomScale(
+                                    (-0.5, -0.1), always_apply=True
+                                ),
+                                alb.Resize(
+                                    self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
+                                )
+                            ], p=0.5
+                        )
+                    ]
                 )
             else:
                 raise NotImplementedError()
@@ -306,7 +325,7 @@ class FFPP(DeepFakeDataset):
             raise NotImplementedError()
 
         # construct augmentation driver
-        if (self.frame_augmentation == None and self.frame_augmentation == None):
+        if (self.video_augmentation == None and self.frame_augmentation == None):
             def driver(x, replay=None):
                 return x, replay
 
@@ -416,7 +435,7 @@ class FFPP(DeepFakeDataset):
                             f'Video {path.join(self.data_dir, self.TYPE_DIRS[df_type], comp, "videos", idx)} does not present in the processed dataset.'
                         )
                         self.stray_videos[idx] = (0 if df_type == "REAL" else 1)
-                self.video_list += comp_videos[:int(len(comp_videos)*self.ratio)]
+                self.video_list += comp_videos[:int(len(comp_videos) * self.ratio)]
 
         # permanant shuffle
         random.Random(1019).shuffle(self.video_list)
@@ -469,7 +488,45 @@ class FFPP(DeepFakeDataset):
                 c_idx = random.randint(*interval)
                 desire_entity_indices = [idx, c_idx]
             elif self.strategy == FFPPSampleStrategy.CONTRAST_PAIR:
-                raise NotImplementedError()
+                video_idx, video_df_type, _, video_idx_name, _ = self.video_info(idx)
+                offset_clip = (
+                    idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx - 1])
+                )
+                logging.debug(f"Source Index/DF_TYPE: {idx}/{video_df_type}")
+                if (video_df_type == "REAL"):
+                    logging.debug(f"Seek for a Fake Entity...")
+                    try:
+                        ground = "back"
+                        video_name = video_idx_name
+                        if (not video_name in self.fake_clip_idx[ground]):
+                            raise Exception("unable to pair video.")
+                        interval = random.choice(self.fake_clip_idx[ground][video_name])
+                        if (offset_clip > (interval[1] - interval[0])):
+                            raise Exception("unable to pair video clip.")
+                        c_idx = interval[0] + offset_clip
+                    except Exception as e:
+                        ground = random.choice(list(self.fake_clip_idx.keys()))
+                        video_name = random.choice(list(self.fake_clip_idx[ground].keys()))
+                        interval = random.choice(self.fake_clip_idx[ground][video_name])
+                        c_idx = random.randint(*interval)
+                    logging.debug(f"Pair with {video_name} at {ground}-ground ...")
+                else:
+                    logging.debug(f"Seek for a Real Entity...")
+                    try:
+                        video_name = video_idx_name.split("_")[0]
+                        if (not video_name in self.real_clip_idx):
+                            raise Exception("unable to pair video.")
+                        interval = self.real_clip_idx[video_name]
+                        if (offset_clip > (interval[1] - interval[0])):
+                            raise Exception("unable to pair video clip.")
+                        c_idx = interval[0] + offset_clip
+                    except Exception as e:
+                        video_name = random.choice(list(self.real_clip_idx.keys()))
+                        interval = self.real_clip_idx[video_name]
+                        c_idx = random.randint(*interval)
+                    logging.debug(f"Pair with {video_name}...")
+
+                desire_entity_indices = [idx, c_idx]
             elif self.strategy == FFPPSampleStrategy.QUALITY_PAIR:
                 raise NotImplementedError()
             else:
@@ -699,7 +756,8 @@ class FFPPDataModule(DeepFakeDataModule):
                 split="val",
                 pack=self.pack,
                 strategy=FFPPSampleStrategy.NORMAL,
-                augmentations=FFPPAugmentation.NONE
+                augmentations=FFPPAugmentation.NONE,
+                max_clips=self.max_clips
             )
 
         elif stage == "test":

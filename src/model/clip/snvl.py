@@ -394,7 +394,7 @@ class VideoFeatureExtractor(nn.Module):
         prompt_num,
         prompt_layers,
         prompt_dropout,
-        text_embed=True,
+        text_embed=False,
         attn_record=False
     ):
         super().__init__()
@@ -494,7 +494,8 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
         prompt_num: int = 0,
         prompt_layers: int = 0,
         prompt_dropout: float = 0,
-        with_frame: bool = False
+        with_frame: bool = False,
+        text_embed: bool = False
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -507,7 +508,8 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
             prompt_num=prompt_num,
             prompt_layers=prompt_layers,
             prompt_dropout=prompt_dropout,
-            with_frame=with_frame
+            with_frame=with_frame,
+            text_embed=text_embed
         )
         self.model = BinaryLinearClassifier(**params)
 

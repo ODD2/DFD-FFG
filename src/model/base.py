@@ -3,6 +3,7 @@ import lightning.pytorch as pl
 
 from torch import optim
 from functools import partial
+from torchmetrics.aggregation import MeanMetric
 from torchmetrics.classification import AUROC, Accuracy
 
 
@@ -64,7 +65,8 @@ class ODBinaryMetricClassifier(ODClassifier):
         self.dts_metrics = {}
         self.metric_map = {
             "auc": partial(AUROC, task="BINARY", num_classes=2),
-            "acc": partial(Accuracy, task="BINARY", num_classes=2)
+            "acc": partial(Accuracy, task="BINARY", num_classes=2),
+            "loss": MeanMetric
         }
 
     def get_metric(self, dts_name, metric_name):
@@ -82,8 +84,10 @@ class ODBinaryMetricClassifier(ODClassifier):
         # save metrics
         logits = result['logits'].detach().softmax(dim=-1).cpu()
         labels = result['labels'].detach().cpu()
+        loss = result["loss"].detach().cpu()
         self.get_metric(result['dts_name'], 'auc').update(logits[:, 1], labels)
         self.get_metric(result['dts_name'], 'acc').update(logits[:, 1], labels)
+        self.get_metric(result['dts_name'], 'loss').update(loss)
 
     def shared_beg_epoch_procedure(self, phase):
         self.reset_metrics()
