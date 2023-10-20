@@ -11,3 +11,5 @@ misc/
 misc
 .cache/
 .cache
+lightning_logs/
+.lr_find_*

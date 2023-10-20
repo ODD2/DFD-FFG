@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from enum import IntEnum, auto
+from enum import IntEnum, auto, IntFlag
 
 
 class PromptMode(IntEnum):
@@ -15,6 +15,12 @@ class PromptMode(IntEnum):
     SHALLOW = auto()
     DEEPC = auto()
     EXPRES = auto()
+
+
+class PromptMask(IntFlag):
+    NONE = 0
+    CLS_MASK = auto()
+    PROMPT_MASK = auto()
 
 
 class Bottleneck(nn.Module):
@@ -189,6 +195,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
         n_head,
         prompt_num: int = 0,
         prompt_mode: PromptMode = PromptMode.NONE,
+        prompt_mask: PromptMask = PromptMask.NONE,
         attn_record=False,
         ignore_attr=False
     ):
@@ -203,6 +210,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
 
         self.prompt_num = prompt_num
         self.prompt_mode = prompt_mode
+        self.prompt_mask = prompt_mask
 
         # recordings
         self.attn_record = attn_record
@@ -241,6 +249,17 @@ class MultiheadAttentionAttrExtract(nn.Module):
         v = v.view(*view_as)
 
         aff = torch.einsum('nqhc,nkhc->nqkh', q / (q.size(-1) ** 0.5), k)
+
+        # affinity masking for prompts
+        if (self.prompt_num > 0):
+            tokens = q.shape[1] - self.prompt_num
+            m = torch.zeros(aff.shape[1:], dtype=bool, device=aff.device)
+            if (PromptMask.CLS_MASK in self.prompt_mask):
+                m[0, tokens:] = True  # avoid direct interaction between cls and prompt
+            if (PromptMask.PROMPT_MASK in self.prompt_mask):
+                m[tokens:, tokens:] = True  # mask inter-relation between prompts
+            aff = aff.masked_fill(m, -1e10)
+
         aff = aff.softmax(dim=-2)
         mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
 

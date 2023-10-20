@@ -7,7 +7,7 @@ import torch
 def extract_features(encoder, frame):
     assert len(frame.shape) == 4
     # get attributes from each CLIP ViT layer
-    kvs = encoder(frame.to("cuda"))
+    kvs = encoder(frame.to("cuda"))["layer_attrs"]
     # discard original CLS token and restore temporal dimension
     for i in range(len(kvs)):
         for k in kvs[i].keys():
@@ -16,3 +16,20 @@ def extract_features(encoder, frame):
                 kvs[i][k] = kvs[i][k].flatten(-2)
     torch.cuda.empty_cache()
     return kvs
+
+
+def load_model(model_cls, ckpt_path="", device="cuda", extra_params={}):
+    if (ckpt_path == ""):
+        model = model_cls(
+            attn_record=True,
+            **extra_params
+        )
+    else:
+        model = model_cls.load_from_checkpoint(
+            ckpt_path,
+            strict=False,
+            attn_record=True,
+            map_location="cpu",
+            ** extra_params
+        )
+    return model
