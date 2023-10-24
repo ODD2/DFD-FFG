@@ -261,7 +261,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
                 m[0, tokens:] = True  # avoid direct interaction between cls and prompt
             if (PromptMask.PROMPT_MASK in self.prompt_mask):
                 m[tokens:, tokens:] = True  # mask inter-relation between prompts
-            aff = aff.masked_fill(m, -1e10)
+            aff = aff.masked_fill(m, -1e4)
 
         aff = aff.softmax(dim=-2)
         mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)

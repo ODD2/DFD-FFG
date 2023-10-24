@@ -28,7 +28,7 @@
             "args": [
                 "--config",
                 "configs/base.yaml",
-                "--trainer.precision=bf16",
+                "--trainer.precision=16",
                 // ######### LMVL #########
                 "--config",
                 "configs/model/clip/ftfe/tmvl.yaml",
