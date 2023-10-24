@@ -1,3 +1,4 @@
+# %%
 import os
 import sys
 import cv2
@@ -11,20 +12,23 @@ import torchvision.transforms as T
 
 from tqdm import tqdm
 from notebooks.tools import extract_features
-from src.model.clip.snvl import CLIPVideoAttrExtractor
+from src.model.clip.snvl import FrameAttrExtractor
+from src.clip.model_vpt import PromptMode
 from src.dataset.ffpp import FFPP, FFPPSampleStrategy, FFPPAugmentation
+from sklearn.cluster import KMeans
 
 
 def fetch_semantic_features(
     encoder,
     df_types=["REAL", "NT", "DF", "FS", "F2F"],
     subjects=['q', 'k', 'v', 'out'],
-    seconds=1,
+    seconds=3,
     frames=1,
     sample_num=100,
     save_path="",
     visualize=False,
     seed=None,
+    centroid_mode=False
 ):
     transform = encoder.transform
     patch_num = encoder.n_patch
@@ -37,7 +41,7 @@ def fetch_semantic_features(
         compressions=['c23'],
         clip_duration=seconds,
         strategy=FFPPSampleStrategy.NORMAL,
-        augmentation=FFPPAugmentation.NONE,
+        augmentations=FFPPAugmentation.NONE,
         force_random_speed=False,
         split='train',
         data_dir="datasets/ffpp",
@@ -45,7 +49,8 @@ def fetch_semantic_features(
         pack=False,
         transform=T.Compose([
             T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC)
-        ])
+        ]),
+        max_clips=3
     )
 
     # the following patch locations are based on a 14x14 grid.
@@ -111,8 +116,9 @@ def fetch_semantic_features(
     if (seed):
         random.seed(seed)
 
+    indices = random.sample(range(len(dataset)), sample_num)
     # random samples
-    for _ in tqdm(range(sample_num)):
+    for idx in tqdm(indices):
         ########## random select index ############
         idx = random.randint(0, len(dataset))
         data = dataset[idx]
@@ -180,10 +186,42 @@ def fetch_semantic_features(
                             features[l][s][0, loc].tolist()
                         )
 
+    def centroid(points):
+        if (len(points) == 0):
+            return None
+
+        points = torch.tensor(points)
+        # sort_point_l2_idx = torch.nn.functional.mse_loss(
+        #     # points.unsqueeze(0).repeat(points.shape[0], 1, 1),
+        #     # points.unsqueeze(1).repeat(1, points.shape[0], 1),
+        #     points.unsqueeze(0),
+        #     points.unsqueeze(1),
+        #     reduction="none"
+        # ).flatten(1).sum(1).sort(descending=True)[1]
+        sort_point_l2_idx = (
+            (
+                1 - torch.nn.functional.cosine_similarity(
+                    # points.unsqueeze(0).repeat(points.shape[0], 1, 1),
+                    # points.unsqueeze(1).repeat(1, points.shape[0], 1),
+                    # reduction="none",
+                    points.unsqueeze(0),
+                    points.unsqueeze(1),
+                    dim=-1
+                )
+            ).flatten(1).sum(1).sort(descending=True)[1]
+        )
+        skip_num = int(sort_point_l2_idx.shape[0] * 0.9)
+        target_indices = sort_point_l2_idx[skip_num:]
+        return points[target_indices].mean(0)
+
     semantic_patches = {
         s: {
             p: [
-                torch.tensor(semantic_patches[s][p][l]).mean(dim=0)
+                (
+                    centroid(semantic_patches[s][p][l])
+                    if centroid_mode else
+                    torch.tensor(semantic_patches[s][p][l]).mean(dim=0)
+                )
                 for l in range(layer_num)
             ]
             for p in semantic_locations.keys()
@@ -198,14 +236,42 @@ def fetch_semantic_features(
     return semantic_patches
 
 
+# %%
 if __name__ == "__main__":
-    encoder = CLIPVideoAttrExtractor()
+    encoder = FrameAttrExtractor(
+        architecture="ViT-L/14",
+        prompt_dropout=0,
+        prompt_layers=0,
+        prompt_mode=PromptMode.NONE,
+        prompt_num=0,
+        text_embed=False
+    )
     encoder.eval()
     encoder.to("cuda")
 
     fetch_semantic_features(
         encoder, df_types=["REAL"],
-        sample_num=1000,
+        sample_num=500,
         visualize=False,
-        save_path="./misc/real_semantic_patches_v4_1000.pickle"
+        save_path="./misc/L14_real_semantic_patches_v1_1000.pickle",
+        seed=1019
     )
+
+    fetch_semantic_features(
+        encoder, df_types=["REAL", "DF", "FS", "F2F", "NT"],
+        sample_num=500,
+        visualize=False,
+        save_path="./misc/L14_all_semantic_patches_v1_1000.pickle",
+        seed=1019
+    )
+
+    fetch_semantic_features(
+        encoder, df_types=["REAL"],
+        sample_num=500,
+        visualize=False,
+        save_path="./misc/L14_real_semantic_patches_v1_1000_centroid.pickle",
+        seed=1019,
+        centroid_mode=True
+    )
+
+# %%

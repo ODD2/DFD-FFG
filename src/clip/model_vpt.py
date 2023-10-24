@@ -238,7 +238,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
                 out=out[:, :tokens]
             )
 
-    def forward(self, x):
+    def forward(self, x, attn_mask=None):
         self.pop_attr()
         x = x.transpose(0, 1)
         q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
@@ -249,6 +249,9 @@ class MultiheadAttentionAttrExtract(nn.Module):
         v = v.view(*view_as)
 
         aff = torch.einsum('nqhc,nkhc->nqkh', q / (q.size(-1) ** 0.5), k)
+
+        if (not type(attn_mask) == type(None)):
+            aff += attn_mask.unsqueeze(-1)
 
         # affinity masking for prompts
         if (self.prompt_num > 0):
@@ -325,7 +328,8 @@ class ResidualAttentionBlock(nn.Module):
 
     def attention(self, x: torch.Tensor):
         # modified
-        return self.attn(x)
+        self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
+        return self.attn(x, self.attn_mask)
 
     def forward(self, x: torch.Tensor):
         tokens = x.shape[0] - self.prompt_num
@@ -553,6 +557,7 @@ class CLIP(nn.Module):
         transformer_width: int,
         transformer_heads: int,
         transformer_layers: int,
+        ignore_attr: bool = False,
         **model_kargs
     ):
         super().__init__()
@@ -577,6 +582,7 @@ class CLIP(nn.Module):
                 layers=vision_layers,
                 heads=vision_heads,
                 output_dim=embed_dim,
+                ignore_attr=ignore_attr,
                 **model_kargs
             )
 
@@ -584,7 +590,8 @@ class CLIP(nn.Module):
             width=transformer_width,
             layers=transformer_layers,
             heads=transformer_heads,
-            attn_mask=self.build_attention_mask()
+            attn_mask=self.build_attention_mask(),
+            ignore_attr=ignore_attr
         )
 
         self.vocab_size = vocab_size

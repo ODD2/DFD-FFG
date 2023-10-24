@@ -200,7 +200,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
     def set_attr(self, q, k, v, out):
         self.attr = dict(q=q, k=k, v=v, out=out)
 
-    def forward(self, x):
+    def forward(self, x, attn_mask=None):
         self.pop_attr()
         x = x.transpose(0, 1)
         q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
@@ -211,6 +211,8 @@ class MultiheadAttentionAttrExtract(nn.Module):
         v = v.view(*view_as)
 
         aff = torch.einsum('nqhc,nkhc->nqkh', q / (q.size(-1) ** 0.5), k)
+        if (not type(attn_mask) == type(None)):
+            aff += attn_mask.unsqueeze(-1)
         aff = aff.softmax(dim=-2)
         mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
 
@@ -247,7 +249,8 @@ class ResidualAttentionBlock(nn.Module):
         # return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
 
         # modified
-        return self.attn(x)
+        self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
+        return self.attn(x, self.attn_mask)
 
     def forward(self, x: torch.Tensor):
         x = x + self.attention(self.ln_1(x))

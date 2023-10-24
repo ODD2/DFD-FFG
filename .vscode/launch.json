@@ -5,6 +5,13 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Python: Arbitrary",
+            "type": "python",
+            "request": "launch",
+            "module": "notebooks.text_prompt.gender_alignment",
+            "justMyCode": true
+        },
+        {
             "name": "Python: Current File",
             "type": "python",
             "request": "launch",
@@ -21,16 +28,37 @@
             "args": [
                 "--config",
                 "configs/base.yaml",
+                "--trainer.precision=bf16",
+                // ######### LMVL #########
                 "--config",
-                "configs/model/clip/snvl.yaml",
-                "--config",
-                "configs/model/clip/ffg.yaml",
-                "--config",
-                "configs/model/clip/vpt.yaml",
+                "configs/model/clip/ftfe/tmvl.yaml",
+                // "--config",
+                // "configs/model/clip/ftfe/amg.yaml",
+                // "--model.init_args.architecture=ViT-B/14",
+                // "--model.init_args.prompt_num=100",
+                // ######### SNVL #########
+                // "--config",
+                // "configs/model/clip/snvl.yaml",
+                // // "--config",
+                // // "configs/model/clip/vit_l_14.yaml"
+                // "--config",
+                // "configs/model/clip/ffg.yaml",
+                // "--config",
+                // "configs/model/clip/vpt.yaml",
+                // "--model.init_args.with_frame=true",
+                // "--model.init_args.text_embed=false",
+                // // "configs/model/clip_snvl_ffg.yaml"
+                // // "configs/model/clip_text_aff_snvl.yaml"
+                // ######### GENERIC ########
                 "--config",
                 "configs/test.yaml",
-                // "configs/model/clip_snvl_ffg.yaml"
-                // "configs/model/clip_text_aff_snvl.yaml"
+                "--data.init_args.batch_size=5",
+                "--data.init_args.num_frames=1",
+                "--model.init_args.prompt_num=1",
+                "--model.init_args.prompt_layers=24",
+                "--model.init_args.prompt_mode=DEEP",
+                "--data.init_args.train_datamodules.init_args.augmentations=[NONE]",
+                "--model.init_args.architecture=ViT-L/14"
             ]
         },
         {
@@ -41,16 +69,16 @@
             "justMyCode": false,
             "args": [
                 // "--config",
-                "logs/DFD-FFG/4dbhl3kn/setting.yaml",
+                "logs/DFD-FFG/o4w99t7e/setting.yaml",
                 "configs/inference.yaml",
-                "logs/DFD-FFG/4dbhl3kn/checkpoints/epoch=4-step=2400.ckpt"
+                "logs/DFD-FFG/o4w99t7e/checkpoints/epoch=5-step=3735.ckpt"
             ]
         },
         {
             "name": "Python: Test",
             "type": "python",
             "request": "launch",
-            "module": "testing.vpt",
+            "module": "notebooks.lr_finder",
             "justMyCode": false
         },
         {

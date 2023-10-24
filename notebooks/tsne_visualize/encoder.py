@@ -7,6 +7,7 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 
+from deepface import DeepFace
 from sklearn.manifold import TSNE
 from notebooks.tools import load_model
 from src.model.clip.ftfe import LinearMeanVideoLearner
@@ -49,7 +50,9 @@ def tsne(
             "CDF_REAL": "turquoise",
             "CDF_FAKE": "deeppink",
             "DFDC_REAL": "forestgreen",
-            "DFDC_FAKE": "steelblue"
+            "DFDC_FAKE": "steelblue",
+            "Woman": "red",
+            "Man": "blue"
         }
 
         plt.subplot(1, len(perplexities), i + 1)
@@ -110,7 +113,10 @@ def runner(model_config, timestr):
     model = load_model(model_cls, model_path).model
     model.to(DEVICE)
     model.eval()
-    aggregate_embeddings = {}
+    aggregate_embeddings = {
+        "Woman": [],
+        "Man": []
+    }
     anc_data = {
         "probs": [],
         "preds": [],
@@ -142,13 +148,32 @@ def runner(model_config, timestr):
             clips.append(dataset.get_entity(idx)["clips"])
         clips = torch.cat(clips, dim=0).to(DEVICE)
 
+        # detect gender
+        gender_clip_idx_map = {
+            "Woman": [],
+            "Man": []
+        }
+        for clip_idx in range(clips.shape[0]):
+            image = clips[[clip_idx]].cpu()
+            image = image.flatten(0, 2).permute(1, 2, 0).numpy()
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            gender = DeepFace.analyze(
+                img_path=image,
+                actions=['gender'],
+                enforce_detection=False,
+                silent=True
+            )[0]["dominant_gender"]
+            gender_clip_idx_map[gender].append(clip_idx)
+
         # extract features (batched)
         results = model(clips)
         logits = results["logits"].detach().cpu()
         embeds = results["embeds"].mean(1).detach().cpu()
 
         # record embeddings
-        aggregate_embeddings[df_type] = embeds
+        # aggregate_embeddings[df_type] = embeds
+        for gender, clip_indices in gender_clip_idx_map.items():
+            aggregate_embeddings[gender].append(embeds[clip_indices])
 
         # check integrity
         probs = logits.softmax(dim=-1)[:, 1].numpy()
@@ -165,8 +190,8 @@ def runner(model_config, timestr):
     features = []
     labels = []
     for k, l in aggregate_embeddings.items():
-        labels.append((k, len(l)))
-        features.append(l)
+        labels.append((k, sum([len(_l) for _l in l])))
+        features.extend(l)
     features = torch.cat(features, dim=0)
 
     tsne(
