@@ -618,7 +618,7 @@ class FFPP(DeepFakeDataset):
 
             # fetch frames of clip duration
             for sample_idx in range(self.num_frames):
-                vid_reader.seek(video_sample_offset + sample_idx * video_sample_stride, keyframes_only=True)
+                vid_reader.seek(video_sample_offset + sample_idx * video_sample_stride)
                 frame = next(vid_reader)
                 frames.append(frame["data"])
 
@@ -784,7 +784,7 @@ if __name__ == "__main__":
         batch_size=24,
         num_workers=8,
         num_frames=10,
-        clip_duration=1,
+        clip_duration=4,
         force_random_speed=False,
         strategy=FFPPSampleStrategy.CONTRAST_RAND,
         augmentations=[

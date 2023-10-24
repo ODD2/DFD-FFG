@@ -80,7 +80,7 @@ class CDF(DeepFakeDataset):
                     )
                     self.stray_videos[filename] = (0 if df_type == "REAL" else 1)
 
-            self.video_list += _videos[:int(len(_videos)*self.ratio)]
+            self.video_list += _videos[:int(len(_videos) * self.ratio)]
 
         # permanant shuffle
         random.Random(1019).shuffle(self.video_list)
@@ -159,7 +159,7 @@ class CDF(DeepFakeDataset):
 
             # fetch frames of clip duration
             for sample_idx in range(self.num_frames):
-                vid_reader.seek(video_sample_offset + sample_idx * video_sample_stride, keyframes_only=True)
+                vid_reader.seek(video_sample_offset + sample_idx * video_sample_stride)
                 frame = next(vid_reader)
                 frames.append(frame["data"])
 
@@ -191,8 +191,8 @@ class CDF(DeepFakeDataset):
             logging.debug(
                 "Video Clip: {}({}s~{}s), Completed!".format(
                     vid_path,
-                    self.clip_duration*clip_of_video,
-                    (self.clip_duration+1)*clip_of_video
+                    self.clip_duration * clip_of_video,
+                    (self.clip_duration + 1) * clip_of_video
                 )
             )
 
