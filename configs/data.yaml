@@ -16,7 +16,7 @@ init_args:
       - VIDEO_RRC
       - FRAME
       force_random_speed: null
-      data_dir: 'datasets/ffpp'
+      data_dir: 'datasets/ffpp/'
       vid_ext: '.avi'
       pack: false
       max_clips: 3
