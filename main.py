@@ -43,36 +43,36 @@ def cli_main():
     # initialize cli
     cli = configure_cli()
 
-    # # monitor model gradient and parameter histograms
-    # cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False)
+    # monitor model gradient and parameter histograms
+    cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False)
 
-    # # Load & configure datasets
-    # cli.datamodule.affine_model(cli.model)
-    # cli.datamodule.affine_trainer(cli.trainer)
+    # Load & configure datasets
+    cli.datamodule.affine_model(cli.model)
+    cli.datamodule.affine_trainer(cli.trainer)
 
-    # # run
-    # cli.trainer.fit(
-    #     cli.model,
-    #     datamodule=cli.datamodule
-    # )
+    # run
+    cli.trainer.fit(
+        cli.model,
+        datamodule=cli.datamodule
+    )
 
-    # # after training:
-    # # 1. unwatch model
-    # cli.trainer.logger.experiment.unwatch(cli.model)
-    # # 2. save the config
-    # cli.trainer.logger.experiment.save(
-    #     glob_str=os.path.join(cli.trainer.log_dir, 'setting.yaml'),
-    #     base_path=cli.trainer.log_dir,
-    #     policy="now"
-    # )
+    # after training:
+    # 1. unwatch model
+    cli.trainer.logger.experiment.unwatch(cli.model)
+    # 2. save the config
+    cli.trainer.logger.experiment.save(
+        glob_str=os.path.join(cli.trainer.log_dir, 'setting.yaml'),
+        base_path=cli.trainer.log_dir,
+        policy="now"
+    )
 
-    # # test the best model.
-    # cli.trainer.test(
-    #     cli.model,
-    #     datamodule=cli.datamodule,
-    #     verbose=False,
-    #     ckpt_path="best"
-    # )
+    # test the best model.
+    cli.trainer.test(
+        cli.model,
+        datamodule=cli.datamodule,
+        verbose=False,
+        ckpt_path="best"
+    )
 
     # finally
     cli.trainer.logger.experiment.finish()
