@@ -40,6 +40,8 @@ class ODLightningCLI(LightningCLI):
         parser.add_optimizer_args(torch.optim.AdamW)
         parser.add_lr_scheduler_args(torch.optim.lr_scheduler.LinearLR)
 
+        parser.add_argument("--notes", default="")
+
 
 class ODTrainer(Trainer):
     # rewrite the log_dir property to sync with logger configurations.

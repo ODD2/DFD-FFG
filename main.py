@@ -4,7 +4,8 @@ import logging
 import warnings
 import lightning.pytorch as pl
 
-from src.utility.builtin import ODTrainer,  ODLightningCLI
+from src.utility.builtin import ODTrainer, ODLightningCLI
+from src.utility.notify import send_to_telegram
 torch.set_float32_matmul_precision('high')
 
 
@@ -75,6 +76,13 @@ def cli_main():
 
     # finally
     cli.trainer.logger.experiment.finish()
+    send_to_telegram(
+        "Training  Complete. (id:{}/{}, notes:'{}')".format(
+            cli.trainer.logger.name,
+            cli.trainer.logger.version.upper(),
+            cli.config.notes
+        )
+    )
 
 
 if __name__ == "__main__":
