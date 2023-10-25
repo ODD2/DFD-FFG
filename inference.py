@@ -91,9 +91,9 @@ def main(params):
             probs = []
             for beg in range(0, x.shape[0], N):
                 results = model.evaluate(
-                    x[beg:beg+N],
+                    x[beg:beg + N],
                     **{
-                        _k: z[_k][beg:beg+N]
+                        _k: z[_k][beg:beg + N]
                         for _k in z
                     }
                 )
@@ -137,6 +137,8 @@ def main(params):
 
     with open(path.join(root, f'stats_{timestamp}.pickle'), "wb") as f:
         pickle.dump(stats, f)
+
+    # TODO: send notification after completing the inference.
 
 
 if __name__ == "__main__":
