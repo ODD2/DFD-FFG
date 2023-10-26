@@ -81,7 +81,7 @@ def _convert_image_to_rgb(image):
 
 def _to_tensor(image):
     if (isinstance(image, torch.Tensor)):
-        if (image.max() > 1):
+        if ((image.max() - 1) > 1e-4):
             image = image / 255
         return image.float()
     else:

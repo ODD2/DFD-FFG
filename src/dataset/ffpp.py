@@ -172,16 +172,6 @@ class FFPP(DeepFakeDataset):
                     [
                         alb.RandomResizedCrop(
                             self.n_px, self.n_px, scale=(0.5, 0.75), ratio=(1, 1), p=0.5
-                        ),
-                        alb.Compose(
-                            [
-                                alb.RandomScale(
-                                    (-0.5, -0.1), always_apply=True
-                                ),
-                                alb.Resize(
-                                    self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
-                                )
-                            ], p=0.5
                         )
                     ]
                 )
