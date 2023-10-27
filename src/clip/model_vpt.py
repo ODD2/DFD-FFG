@@ -1,12 +1,14 @@
-from collections import OrderedDict
-from typing import Tuple, Union
-
-import numpy as np
 import torch
+import random
+import pickle
+import numpy as np
 import torch.nn.functional as F
 from torch import nn
 
+
 from enum import IntEnum, auto, IntFlag
+from collections import OrderedDict
+from typing import Tuple, Union
 
 
 class PromptMode(IntEnum):
@@ -196,8 +198,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
         prompt_num: int = 0,
         prompt_mode: PromptMode = PromptMode.NONE,
         prompt_mask: PromptMask = PromptMask.NONE,
-        attn_record=False,
-        ignore_attr=False
+        attn_record=False
     ):
         super().__init__()
 
@@ -206,7 +207,6 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
         self.n_head = n_head
-        self.attr = {}
 
         self.prompt_num = prompt_num
         self.prompt_mode = prompt_mode
@@ -214,32 +214,9 @@ class MultiheadAttentionAttrExtract(nn.Module):
 
         # recordings
         self.attn_record = attn_record
-        self.ignore_attr = ignore_attr
         self.aff = None
 
-    def pop_attr(self):
-        ret = self.get_attr()
-        self.attr.clear()
-        return ret
-
-    def get_attr(self):
-        return {k: self.attr[k] for k in self.attr}
-
-    def set_attr(self, q, k, v, out):
-        if not self.ignore_attr:
-            if (self.prompt_mode == PromptMode.NONE):
-                tokens = q.shape[1]
-            else:
-                tokens = q.shape[1] - self.prompt_num
-            self.attr = dict(
-                q=q[:, :tokens],
-                k=k[:, :tokens],
-                v=v[:, :tokens],
-                out=out[:, :tokens]
-            )
-
     def forward(self, x, attn_mask=None):
-        self.pop_attr()
         x = x.transpose(0, 1)
         q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
 
@@ -261,18 +238,28 @@ class MultiheadAttentionAttrExtract(nn.Module):
                 m[0, tokens:] = True  # avoid direct interaction between cls and prompt
             if (PromptMask.PROMPT_MASK in self.prompt_mask):
                 m[tokens:, tokens:] = True  # mask inter-relation between prompts
+
             aff = aff.masked_fill(m, -1e10)
 
         aff = aff.softmax(dim=-2)
         mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
 
         out = self.out_proj(mix.flatten(-2))
-        self.set_attr(q, k, v, out)
 
         if self.attn_record:
             self.aff = aff
+
+        q = q.transpose(0, 1)
+        k = k.transpose(0, 1)
+        v = v.transpose(0, 1)
         out = out.transpose(0, 1)
-        return out
+
+        return dict(
+            q=q,
+            k=k,
+            v=v,
+            out=out
+        )
 
 
 class ResidualAttentionBlock(nn.Module):
@@ -280,6 +267,7 @@ class ResidualAttentionBlock(nn.Module):
         self,
         d_model: int,
         n_head: int,
+        block_index: int,
         attn_mask: torch.Tensor = None,
         prompt_num: int = 0,
         prompt_mode: PromptMode = PromptMode.NONE,
@@ -294,9 +282,11 @@ class ResidualAttentionBlock(nn.Module):
             n_head,
             prompt_num=prompt_num,
             prompt_mode=prompt_mode,
-            attn_record=attn_record,
-            ignore_attr=ignore_attr
+            attn_record=attn_record
         )
+
+        self.block_index = block_index
+        self.ignore_attr = ignore_attr
 
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(OrderedDict([
@@ -306,6 +296,9 @@ class ResidualAttentionBlock(nn.Module):
         ]))
         self.ln_2 = LayerNorm(d_model)
         self.attn_mask = attn_mask
+
+        # preserve attrs
+        self.attr = {}
 
         # prompting
         self.prompt_num = prompt_num
@@ -324,7 +317,37 @@ class ResidualAttentionBlock(nn.Module):
         return [] if (type(self.prompts) == type(None)) else [self.prompts]
 
     def prompt_dropout_modules(self):
-        return [] if (type(self.prompt_drop) == type(None)) else [self.prompt_drop]
+        return [] if (type(self.prompt_drop) == type(None)) else [self.prompt_drop, self.attn]
+
+    def pop_attr(self):
+        ret = self.get_attr()
+        self.attr.clear()
+        return ret
+
+    def get_attr(self):
+        return {k: self.attr[k] for k in self.attr}
+
+    def set_attr(self, q, k, v, out, emb):
+        if not self.ignore_attr:
+
+            q = q.transpose(0, 1)
+            k = k.transpose(0, 1)
+            v = v.transpose(0, 1)
+            out = out.transpose(0, 1)
+            emb = emb.transpose(0, 1)
+
+            if (self.prompt_mode == PromptMode.NONE):
+                tokens = q.shape[1]
+            else:
+                tokens = q.shape[1] - self.prompt_num
+
+            self.attr = dict(
+                q=q[:, :tokens],
+                k=k[:, :tokens],
+                v=v[:, :tokens],
+                out=out[:, :tokens],
+                emb=emb[:, :tokens]
+            )
 
     def attention(self, x: torch.Tensor):
         # modified
@@ -332,27 +355,32 @@ class ResidualAttentionBlock(nn.Module):
         return self.attn(x, self.attn_mask)
 
     def forward(self, x: torch.Tensor):
+        self.pop_attr()
         tokens = x.shape[0] - self.prompt_num
         if (
             self.prompt_mode == PromptMode.NONE or
             self.prompt_mode == PromptMode.SHALLOW
         ):
-            x = x + self.attention(self.ln_1(x))
-            x = x + self.mlp(self.ln_2(x))
+            pass
         elif (self.prompt_mode == PromptMode.DEEP):
             x[tokens:] = self.prompt_drop(
                 self.prompts.repeat(1, x.shape[1], 1)
             )
-            x = x + self.attention(self.ln_1(x))
-            x = x + self.mlp(self.ln_2(x))
         elif (self.prompt_mode == PromptMode.DEEPC):
             x[tokens:] += self.prompt_drop(
                 self.prompts.repeat(1, x.shape[1], 1)
             )
-            x = x + self.attention(self.ln_1(x))
-            x = x + self.mlp(self.ln_2(x))
         elif (self.prompt_mode == PromptMode.EXPRES):
             raise NotImplementedError()
+
+        data = self.attention(self.ln_1(x))
+        x = x + data["out"]
+        x = x + self.mlp(self.ln_2(x))
+
+        self.set_attr(
+            **data,
+            emb=x
+        )
 
         return x
 
@@ -380,9 +408,10 @@ class Transformer(nn.Module):
         self.prompt_layers = prompt_layers
         self.resblocks = nn.Sequential(*[
             ResidualAttentionBlock(
-                width,
-                heads,
-                attn_mask,
+                d_model=width,
+                n_head=heads,
+                block_index=i,
+                attn_mask=attn_mask,
                 attn_record=attn_record,
                 ignore_attr=ignore_attr,
                 ** dict(

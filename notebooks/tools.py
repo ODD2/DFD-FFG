@@ -12,8 +12,13 @@ def extract_features(encoder, frame):
     for i in range(len(kvs)):
         for k in kvs[i].keys():
             kvs[i][k] = kvs[i][k][:, 1:].to("cpu")
-            if (not k == "out"):
+            if (len(kvs[i][k].shape) == 4):
                 kvs[i][k] = kvs[i][k].flatten(-2)
+            elif (len(kvs[i][k].shape) == 3):
+                pass
+            else:
+                raise NotImplementedError()
+
     torch.cuda.empty_cache()
     return kvs
 

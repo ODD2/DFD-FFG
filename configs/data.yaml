@@ -31,6 +31,12 @@ init_args:
       data_dir: 'datasets/dfdc/'
       vid_ext: '.avi'
       pack: false
+  - class_path: src.dataset.fsh.FShDataModule
+    init_args:
+      compressions: ['c23']
+      data_dir: 'datasets/ffpp/'
+      vid_ext: '.avi'
+      pack: false
   test_datamodules:
   - class_path: src.dataset.ffpp.FFPPDataModule
     init_args:

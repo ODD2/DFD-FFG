@@ -41,6 +41,7 @@ class ODLightningCLI(LightningCLI):
         parser.add_lr_scheduler_args(torch.optim.lr_scheduler.LinearLR)
 
         parser.add_argument("--notes", default="")
+        parser.add_argument("--ckpt_path", default=None)
 
 
 class ODTrainer(Trainer):

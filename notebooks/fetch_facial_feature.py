@@ -17,11 +17,13 @@ from src.clip.model_vpt import PromptMode
 from src.dataset.ffpp import FFPP, FFPPSampleStrategy, FFPPAugmentation
 from sklearn.cluster import KMeans
 
+SAMPLE_NUM = 500
+
 
 def fetch_semantic_features(
     encoder,
     df_types=["REAL", "NT", "DF", "FS", "F2F"],
-    subjects=['q', 'k', 'v', 'out'],
+    subjects=['q', 'k', 'v', 'out', "emb"],
     seconds=3,
     frames=1,
     sample_num=100,
@@ -30,6 +32,9 @@ def fetch_semantic_features(
     seed=None,
     centroid_mode=False
 ):
+    if (os.path.exists(save_path)):
+        raise Exception(f"{save_path}, file exists!")
+
     transform = encoder.transform
     patch_num = encoder.n_patch
     n_px = encoder.n_px
@@ -239,39 +244,23 @@ def fetch_semantic_features(
 # %%
 if __name__ == "__main__":
     encoder = FrameAttrExtractor(
-        architecture="ViT-L/14",
+        architecture="ViT-B/16",
         prompt_dropout=0,
         prompt_layers=0,
         prompt_mode=PromptMode.NONE,
         prompt_num=0,
-        text_embed=False
+        text_embed=False,
+        pretrain="misc/FaRL-Base-Patch16-LAIONFace20M-ep64.pth"
     )
     encoder.eval()
     encoder.to("cuda")
 
     fetch_semantic_features(
         encoder, df_types=["REAL"],
-        sample_num=500,
+        sample_num=SAMPLE_NUM,
         visualize=False,
-        save_path="./misc/L14_real_semantic_patches_v1_1000.pickle",
+        save_path=f"./misc/FL_real_semantic_patches_v1_{SAMPLE_NUM}.pickle",
         seed=1019
-    )
-
-    fetch_semantic_features(
-        encoder, df_types=["REAL", "DF", "FS", "F2F", "NT"],
-        sample_num=500,
-        visualize=False,
-        save_path="./misc/L14_all_semantic_patches_v1_1000.pickle",
-        seed=1019
-    )
-
-    fetch_semantic_features(
-        encoder, df_types=["REAL"],
-        sample_num=500,
-        visualize=False,
-        save_path="./misc/L14_real_semantic_patches_v1_1000_centroid.pickle",
-        seed=1019,
-        centroid_mode=True
     )
 
 # %%

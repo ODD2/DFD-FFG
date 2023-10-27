@@ -57,7 +57,8 @@ def cli_main():
     # run
     cli.trainer.fit(
         cli.model,
-        datamodule=cli.datamodule
+        datamodule=cli.datamodule,
+        ckpt_path=cli.config.ckpt_path
     )
 
     # after training:
@@ -79,7 +80,6 @@ def cli_main():
     )
 
     # finally
-    cli.trainer.logger.experiment.finish()
     send_to_telegram(
         "Training  Complete. (id:{}/{}, notes:'{}')".format(
             cli.trainer.logger.name,
@@ -87,6 +87,7 @@ def cli_main():
             cli.config.notes
         )
     )
+    cli.trainer.logger.experiment.finish()
 
 
 if __name__ == "__main__":

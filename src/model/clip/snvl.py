@@ -495,7 +495,8 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
         prompt_layers: int = 0,
         prompt_dropout: float = 0,
         with_frame: bool = False,
-        text_embed: bool = False
+        text_embed: bool = False,
+        label_weights: List[float] = [1, 1]
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -512,6 +513,7 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
             text_embed=text_embed
         )
         self.model = BinaryLinearClassifier(**params)
+        self.label_weights = torch.tensor(label_weights)
 
     @property
     def transform(self):
@@ -530,7 +532,16 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
         output = self(x, **z)
         logits = output["logits"]
         # classification loss
-        cls_loss = nn.functional.cross_entropy(logits, y, reduction="none")
+        cls_loss = nn.functional.cross_entropy(
+            logits,
+            y,
+            reduction="none",
+            weight=(
+                self.label_weights.to(y.device)
+                if stage == "train" else
+                None
+            )
+        )
 
         self.log(
             f"{stage}/{dts_name}/loss",
