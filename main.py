@@ -43,17 +43,22 @@ def cli_main():
     # initialize cli
     cli = configure_cli()
 
+    # update experiment notes
+    cli.trainer.logger.experiment.notes = cli.config.notes
+    cli.trainer.logger.experiment.save()
+
     # monitor model gradient and parameter histograms
     cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False)
 
-    # Load & configure datasets
+    # load & configure datasets
     cli.datamodule.affine_model(cli.model)
     cli.datamodule.affine_trainer(cli.trainer)
 
     # run
     cli.trainer.fit(
         cli.model,
-        datamodule=cli.datamodule
+        datamodule=cli.datamodule,
+        ckpt_path=cli.config.ckpt_path
     )
 
     # after training:
@@ -75,6 +80,13 @@ def cli_main():
     )
 
     # finally
+    send_to_telegram(
+        "Training  Complete. (id:{}/{}, notes:'{}')".format(
+            cli.trainer.logger.name,
+            cli.trainer.logger.version.upper(),
+            cli.config.notes
+        )
+    )
     cli.trainer.logger.experiment.finish()
     send_to_telegram(
         "Training  Complete. (id:{}/{}, notes:'{}')".format(

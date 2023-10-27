@@ -172,16 +172,6 @@ class FFPP(DeepFakeDataset):
                     [
                         alb.RandomResizedCrop(
                             self.n_px, self.n_px, scale=(0.5, 0.75), ratio=(1, 1), p=0.5
-                        ),
-                        alb.Compose(
-                            [
-                                alb.RandomScale(
-                                    (-0.5, -0.1), always_apply=True
-                                ),
-                                alb.Resize(
-                                    self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
-                                )
-                            ], p=0.5
                         )
                     ]
                 )
@@ -464,9 +454,13 @@ class FFPP(DeepFakeDataset):
         self.stack_video_clips.pop(0)
 
     def _build_item_entity_list(self):
-        item_num = len(self)
-        self.item_entity_list = [None] * item_num
-        for idx in range(item_num):
+        self.item_entity_list = []
+        seen_entity_set = set()
+        for idx in range(self.num_entities):
+            # if the idx is allocated, ignore
+            if (idx in seen_entity_set):
+                continue
+
             logging.debug(f"Sample strategy:{self.strategy}")
             if self.strategy == FFPPSampleStrategy.NORMAL:
                 desire_entity_indices = [idx]
@@ -532,13 +526,19 @@ class FFPP(DeepFakeDataset):
             else:
                 raise NotImplementedError()
             logging.debug(f"Item: {idx} desires the entities: {desire_entity_indices}")
-            self.item_entity_list[idx] = desire_entity_indices
 
-    def __len__(self):
+            self.item_entity_list.append(desire_entity_indices)
+            seen_entity_set.update(desire_entity_indices)
+
+    @property
+    def num_entities(self):
         if (self.pack):
             return len(self.video_list)
         else:
             return self.stack_video_clips[-1]
+
+    def __len__(self):
+        return len(self.item_entity_list)
 
     def __getitem__(self, idx):
         item_entities = self.get_item(idx)
@@ -697,15 +697,15 @@ class FFPP(DeepFakeDataset):
 
 class FFPPDataModule(DeepFakeDataModule):
     def __init__(
-            self,
-            df_types: List[str] = [],
-            compressions: List[str] = [],
-            strategy: FFPPSampleStrategy = FFPPSampleStrategy.NORMAL,
-            augmentations: List[FFPPAugmentation] = [FFPPAugmentation.NONE],
-            force_random_speed: bool = None,
-            max_clips: int = 100,
-            *args, **kargs
-
+        self,
+        df_types: List[str] = [],
+        compressions: List[str] = [],
+        strategy: FFPPSampleStrategy = FFPPSampleStrategy.NORMAL,
+        augmentations: List[FFPPAugmentation] = [FFPPAugmentation.NONE],
+        force_random_speed: bool = None,
+        max_clips: int = 100,
+        *args,
+        **kargs
     ):
         super().__init__(*args, **kargs)
         self.df_types = sorted(

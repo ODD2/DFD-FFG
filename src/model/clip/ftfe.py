@@ -3,6 +3,7 @@ import torch
 import pickle
 import torch.nn as nn
 
+from typing import List
 from src.clip.model_vpt import PromptMode, LayerNorm
 from src.model.base import ODBinaryMetricClassifier
 from src.model.clip import FrameAttrExtractor
@@ -16,7 +17,11 @@ class BinaryLinearClassifier(nn.Module):
         **kargs,
     ):
         super().__init__()
-        self.encoder = FrameAttrExtractor(*args, **kargs)
+        self.encoder = FrameAttrExtractor(
+            *args,
+            **kargs,
+            ignore_attr=True
+        )
         create_proj_module = (
             lambda x: nn.Sequential(
                 LayerNorm(x),
@@ -39,46 +44,7 @@ class BinaryLinearClassifier(nn.Module):
         logits = self.proj(results["embeds"].mean(1))
         return dict(
             logits=logits,
-            # TODO(check if lack of memory):
-            # discard the results other than the 'embeds' might save memory
-            **results
-        )
-
-
-class BinaryLinearClassifier2(BinaryLinearClassifier):
-    def __init__(
-        self,
-        *args,
-        **kargs,
-    ):
-        super().__init__(*args, **kargs)
-
-        create_proj_module = (
-            lambda x: nn.Sequential(
-                LayerNorm(x),
-                nn.Dropout(),
-                nn.Linear(x, 4, bias=False)
-            )
-        )
-        self.proj = create_proj_module(self.encoder.embed_dim)
-
-    @property
-    def transform(self):
-        return self.encoder.transform
-
-    @property
-    def n_px(self):
-        return self.encoder.model.input_resolution
-
-    def forward(self, x, *args, **kargs):
-        results = self.encoder(x)
-        logits = self.proj(results["embeds"].mean(1))
-        logits = torch.log(logits.view((*logits.shape[:-1], 2, 2)).softmax(dim=-1).mean(dim=-2))
-        return dict(
-            logits=logits,
-            # TODO(check if lack of memory):
-            # discard the results despite the 'embeds' might save memory
-            **results
+            ** results
         )
 
 
@@ -147,33 +113,6 @@ class TextAffinityHead(nn.Module):
             requires_grad=False
         )
 
-        # text = CLIP.tokenize(
-        #     "the image contains natural and unrealistic facial attributes, such attributes regarding color consistency, image bluriness, face part integrity, image glitters, regional blurry, mouth motion, nose shape, eye focus and forgery contour around the faces."
-        # )
-        # tokens = self.token_embedding(text)[0]
-        # self.text_prompts = text.argmax(dim=-1).item() - 2
-        # self.cls_text_embed = nn.Parameter(
-        #     (
-        #         tokens[1: 1 + self.text_prompts]
-        #         .unsqueeze(0)
-        #         .repeat(
-        #             len(self.gender_text) * self.out_dim,
-        #             1,
-        #             1
-        #         )
-        #         .clone()
-        #     ),
-        #     requires_grad=True
-        # )
-        # self.null_token = nn.Parameter(
-        #     tokens[2].unsqueeze(0).expand(
-        #         len(self.gender_text) * self.out_dim,
-        #         self.n_ctx - self.text_prompts - 2,
-        #         -1
-        #     ).clone(),
-        #     requires_grad=False
-        # )
-
         # remove visual model to save memory
         model.visual = None
 
@@ -187,14 +126,13 @@ class TextAffinityHead(nn.Module):
             ),
             dim=1
         )  # [batch_size, n_ctx, d_model]
-        # assert not False in (x[0] == x[1])
+
         x = x + self.positional_embedding
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)
 
-        # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[
             :,
@@ -203,7 +141,7 @@ class TextAffinityHead(nn.Module):
 
         return x
 
-    def forward(self, features, mean_mode="gender"):
+    def forward(self, features):
         anchors = self.create_anchors()
         gender_anchors = self.gender_embeds
 
@@ -325,157 +263,6 @@ class TextAlignClassifier(nn.Module):
 
 
 ############################################
-class OriginPreservTextAlignVideoLearner(ODBinaryMetricClassifier):
-    def __init__(
-        self,
-        architecture: str = 'ViT-B/16',
-        prompt_mode: PromptMode = PromptMode.NONE,
-        prompt_num: int = 0,
-        prompt_layers: int = 0,
-        prompt_dropout: float = 0,
-        attn_record: bool = False
-    ):
-        super().__init__()
-        self.save_hyperparameters()
-        params = dict(
-            architecture=architecture,
-            prompt_mode=prompt_mode,
-            prompt_num=prompt_num,
-            prompt_layers=prompt_layers,
-            prompt_dropout=prompt_dropout,
-            attn_record=attn_record
-        )
-        self.model = TextAlignClassifier(**params)
-
-        # the original CLIP feature extractor.
-        self.sampler = FrameAttrExtractor(
-            architecture=architecture,
-            text_embed=True,
-            prompt_dropout=0,
-            prompt_layers=0,
-            prompt_mode=PromptMode.NONE,
-            prompt_num=0
-        )
-        self.sampler.requires_grad_(False)
-        self.sampler.eval()
-
-    @property
-    def transform(self):
-        return self.model.transform
-
-    @property
-    def n_px(self):
-        return self.model.n_px
-
-    def shared_step(self, batch, stage):
-        x, y, z = batch["xyz"]
-        indices = batch["indices"]
-        dts_name = batch["dts_name"]
-        names = batch["names"]
-
-        output = self(x, **z)
-        logits = output["logits"]
-        if stage == "train":
-            # _y = torch.tensor(
-            #     [[0.25, 0.75] if i else [0.75, 0.25] for i in y.tolist()],
-            #     device=y.device
-            # )
-            # cls_loss = nn.functional.kl_div(
-            #     nn.functional.log_softmax(logits, dim=-1),
-            #     _y,
-            #     reduction="batchmean"
-            # )
-            cls_loss = nn.functional.cross_entropy(
-                logits,
-                y,
-                reduction="none"
-            )
-        else:
-            # classification loss
-            cls_loss = nn.functional.cross_entropy(
-                logits,
-                y,
-                reduction="none"
-            )
-
-        self.log(
-            f"{stage}/{dts_name}/loss",
-            cls_loss.mean(),
-            batch_size=logits.shape[0]
-        )
-        losses = cls_loss.mean()
-
-        if (stage == "train"):
-            # extract features and attention attributes
-            with torch.no_grad():
-                x, y, z = batch["xyz"]
-                sample_datas = self.sampler(x)
-
-            sample_vid_embeds = sample_datas["embeds"].mean(1)
-            output_vid_embeds = output["embeds"].mean(1)
-            embed_width = output["embeds"].shape[-1]
-            sample_sample_similarity = (
-                1 + torch.nn.functional.cosine_similarity(
-                    sample_vid_embeds.unsqueeze(0),
-                    sample_vid_embeds.unsqueeze(1),
-                    dim=-1
-                )
-            )
-            # sample_sample_prob = (
-            #     sample_sample_similarity /
-            #     torch.sum(
-            #         sample_sample_similarity,
-            #         dim=1,
-            #         keepdim=True
-            #     )
-            # )
-            sample_sample_prob = (
-                sample_sample_similarity * 10
-            ).softmax(dim=-1)
-
-            output_sample_prob = (
-                (embed_width ** -0.5) *
-                (output_vid_embeds @ sample_vid_embeds.T)
-            ).softmax(dim=-1)
-
-            align_loss = torch.nn.functional.kl_div(
-                torch.log(output_sample_prob),
-                sample_sample_prob,
-                reduction="batchmean"
-            )
-
-            stray_loss = torch.nn.functional.mse_loss(
-                sample_vid_embeds,
-                output_vid_embeds,
-                reduction="none"
-            ).sum(dim=1) * (1 - y)
-
-            self.log(
-                f"{stage}/{dts_name}/align_loss",
-                align_loss.mean(),
-                batch_size=logits.shape[0]
-            )
-
-            self.log(
-                f"{stage}/{dts_name}/stray_loss",
-                stray_loss.mean(),
-                batch_size=logits.shape[0]
-            )
-
-            losses += align_loss.mean() * 4
-            losses += stray_loss.mean() / 100
-
-        return {
-            "logits": logits,
-            "labels": y,
-            "loss": losses,
-            "dts_name": dts_name,
-            "indices": indices,
-            "output": output
-        }
-
-
-############################################
 class LinearMeanVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
@@ -485,7 +272,9 @@ class LinearMeanVideoLearner(ODBinaryMetricClassifier):
         prompt_layers: int = 0,
         prompt_dropout: float = 0,
         text_embed: bool = False,
-        attn_record: bool = False
+        attn_record: bool = False,
+        pretrain: str = None,
+        label_weights: List[float] = [1, 1]
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -496,9 +285,12 @@ class LinearMeanVideoLearner(ODBinaryMetricClassifier):
             prompt_layers=prompt_layers,
             prompt_dropout=prompt_dropout,
             text_embed=text_embed,
-            attn_record=attn_record
+            attn_record=attn_record,
+            pretrain=pretrain
         )
         self.model = BinaryLinearClassifier(**params)
+
+        self.label_weights = torch.tensor(label_weights)
 
     @property
     def transform(self):
@@ -516,11 +308,17 @@ class LinearMeanVideoLearner(ODBinaryMetricClassifier):
 
         output = self(x, **z)
         logits = output["logits"]
+
         # classification loss
         cls_loss = nn.functional.cross_entropy(
             logits,
             y,
-            reduction="none"
+            reduction="none",
+            weight=(
+                self.label_weights.to(y.device)
+                if stage == "train" else
+                None
+            )
         )
 
         if (stage == "train"):
@@ -763,10 +561,12 @@ class TextMeanVideoLearner(LinearMeanVideoLearner):
         prompt_dropout: float = 0,
         attn_record: bool = False,
         text_prompts: int = 1,
-        gender_text=["a man", "a woman"]
+        gender_text: List[str] = ["a man", "a woman"],
+        label_weights: List[float] = [1, 1]
     ):
         super().__init__()
         self.save_hyperparameters()
+
         params = dict(
             architecture=architecture,
             prompt_mode=prompt_mode,
@@ -778,6 +578,8 @@ class TextMeanVideoLearner(LinearMeanVideoLearner):
             gender_text=gender_text
         )
         self.model = TextAlignClassifier(**params)
+
+        self.label_weights = torch.tensor(label_weights)
 
     @property
     def transform(self):
@@ -795,11 +597,17 @@ class TextMeanVideoLearner(LinearMeanVideoLearner):
 
         output = self(x, **z)
         logits = output["logits"]
+
         # classification loss
         cls_loss = nn.functional.cross_entropy(
             logits,
             y,
-            reduction="none"
+            reduction="none",
+            weight=(
+                self.label_weights.to(y.device)
+                if stage == "train" else
+                None
+            )
         )
 
         if (stage == "train"):

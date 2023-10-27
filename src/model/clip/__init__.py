@@ -1,3 +1,5 @@
+import torch
+import logging
 import torch.nn as nn
 import src.clip.clip as CLIP
 
@@ -26,6 +28,14 @@ class FrameAttrExtractor(nn.Module):
             ignore_attr=ignore_attr,
             attn_record=attn_record
         )
+        if (pretrain):
+            state_dict = torch.load(pretrain, "cpu")
+            try:
+                self.model.load_state_dict(state_dict, strict=True)
+            except:
+                conflicts = self.model.load_state_dict(state_dict, strict=False)
+                logging.warning(f"Disable strict mode with the following conflicts: {conflicts}")
+
         self.model = self.model.visual.float()
 
         if not text_embed:
@@ -33,9 +43,6 @@ class FrameAttrExtractor(nn.Module):
             self.feat_dim = self.model.transformer.width
         else:
             self.feat_dim = self.model.output_dim
-
-        if (pretrain):
-            self.model.load_state_dict(pretrain)
 
         self.model.requires_grad_(False)
         for param in self.model.prompt_parameters():
@@ -63,7 +70,7 @@ class FrameAttrExtractor(nn.Module):
         # retrieve all layer attributes
         layer_attrs = []
         for blk in self.model.transformer.resblocks:
-            attrs = blk.attn.pop_attr()
+            attrs = blk.pop_attr()
             # restore temporal dimension
             for attr_name in attrs:
                 if (len(x.shape) > 4):
