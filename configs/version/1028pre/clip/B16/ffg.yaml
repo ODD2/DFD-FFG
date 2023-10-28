@@ -1,0 +1,7 @@
+model:
+  class_path: src.model.clip.snvl.CLIPBinaryVideoLearnerFFG
+  init_args:
+    num_queries: 2
+    face_attn_attr: "k"
+    face_parts: ["lips","skin"]
+    face_feature_path: "misc/real_semantic_patches_v4_1000.pickle"

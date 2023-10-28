@@ -10,7 +10,9 @@ from torchmetrics.classification import AUROC, Accuracy
 class ODClassifier(pl.LightningModule):
     def __init__(self):
         super().__init__()
-        self.log = partial(self.log, add_dataloader_idx=False)
+        params = dict(add_dataloader_idx=False, rank_zero_only=True)
+        self.log = partial(self.log, **params)
+        self.log_dict = partial(self.log_dict, **params)
         self.model = None
 
     def forward(self, *args, **kargs):
@@ -69,11 +71,11 @@ class ODBinaryMetricClassifier(ODClassifier):
             "loss": MeanMetric
         }
 
-    def get_metric(self, dts_name, metric_name):
+    def get_metric(self, dts_name, metric_name, device):
         if (not dts_name in self.dts_metrics):
             self.dts_metrics[dts_name] = {}
         if (not metric_name in self.dts_metrics[dts_name]):
-            self.dts_metrics[dts_name][metric_name] = self.metric_map[metric_name]()
+            self.dts_metrics[dts_name][metric_name] = self.metric_map[metric_name]().to(device)
         return self.dts_metrics[dts_name][metric_name]
 
     def reset_metrics(self):
@@ -82,12 +84,12 @@ class ODBinaryMetricClassifier(ODClassifier):
     # shared procedures
     def shared_metric_update_procedure(self, result):
         # save metrics
-        logits = result['logits'].detach().softmax(dim=-1).cpu()
-        labels = result['labels'].detach().cpu()
-        loss = result["loss"].detach().cpu()
-        self.get_metric(result['dts_name'], 'auc').update(logits[:, 1], labels)
-        self.get_metric(result['dts_name'], 'acc').update(logits[:, 1], labels)
-        self.get_metric(result['dts_name'], 'loss').update(loss)
+        logits = result['logits'].detach().softmax(dim=-1)
+        labels = result['labels'].detach()
+        loss = result["loss"].detach()
+        self.get_metric(result['dts_name'], 'auc', logits.device).update(logits[:, 1], labels)
+        self.get_metric(result['dts_name'], 'acc', logits.device).update(logits[:, 1], labels)
+        self.get_metric(result['dts_name'], 'loss', logits.device).update(loss)
 
     def shared_beg_epoch_procedure(self, phase):
         self.reset_metrics()

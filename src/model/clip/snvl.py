@@ -543,36 +543,11 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
             )
         )
 
-        self.log(
-            f"{stage}/{dts_name}/loss",
-            cls_loss.mean(),
-            batch_size=logits.shape[0]
-        )
-
-        if (
-            stage == "train" and
-            ((self.global_step + 1) % self.trainer.log_every_n_steps) == 0
-        ):
-            def get_worst_sample_clips(sample_num=3, stride=3):
-                named_clips = {}
-                sorted_loss, sorted_idx = cls_loss.sort(descending=True)
-                sorted_idx = sorted_idx.tolist()
-                for idx in sorted_idx[:sample_num]:
-                    frames = x[idx][::stride, ...]
-                    frames = (frames - frames.min()) / (frames.max() - frames.min()) * 255
-                    frames = frames.cpu().permute((2, 0, 3, 1)).flatten(1, 2).numpy()
-                    named_clips["{}({})".format(
-                        names[idx],
-                        round(cls_loss[idx].item(), 3)
-                    )] = frames
-                return [
-                    wandb.Image(named_clips[name], caption=name) for name in named_clips
-                ]
-            self.logger.experiment.log(
-                {
-                    f"{stage}/{dts_name}/sample": get_worst_sample_clips()
-                },
-                commit=False
+        if stage == "train":
+            self.log(
+                f"{stage}/{dts_name}/loss",
+                cls_loss.mean(),
+                batch_size=logits.shape[0]
             )
 
         return {
@@ -649,60 +624,6 @@ class BinaryTextAffinityClassifier(VideoFeatureExtractor):
         result = super().forward(*args, **kargs)
         result["logits"] = self.cls_head(result["video_features"])
         return result
-
-
-# Incomplete, Requires Further Adjustments and Refinements.
-class CLIPContrastBinaryTextAffineVideoLearner(ODBinaryMetricClassifier):
-    def __init__(
-        self,
-        num_layers: int,
-        num_frames: int,
-        num_queries: int = 1,
-        architecture='ViT-B/16'
-    ):
-        super().__init__()
-        self.save_hyperparameters()
-        params = dict(
-            num_layers=num_layers,
-            num_frames=num_frames,
-            num_queries=num_queries,
-            architecture=architecture
-        )
-        self.model = BinaryTextAffinityClassifier(**params)
-
-    @property
-    def transform(self):
-        return self.model.transform
-
-    @property
-    def n_px(self):
-        return self.model.n_px
-
-    def shared_step(self, batch, stage):
-        x, y, z = batch["xyz"]
-        indices = batch["indices"]
-        dts_name = batch["dts_name"]
-
-        output = self.model(x, **z)
-        logits = output["logits"]
-        probs = logits.softmax(dim=-1)
-        # classification loss
-        cls_loss = nn.functional.margin_ranking_loss(probs[:, 1], probs[:, 0], y * 2 - 1, margin=0.01) * 5
-
-        self.log(
-            f"{stage}/{dts_name}/loss",
-            cls_loss,
-            batch_size=logits.shape[0]
-        )
-
-        return {
-            "logits": logits,
-            "labels": y,
-            "loss": cls_loss,
-            "dts_name": dts_name,
-            "indices": indices,
-            "output": output
-        }
 
 
 if __name__ == "__main__":
