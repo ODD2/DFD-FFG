@@ -5,7 +5,7 @@ trainer:
   strategy: auto
   devices: auto
   num_nodes: 1
-  precision: 32-true
+  precision: 16
   logger: logger.yaml
   callbacks: null
   fast_dev_run: false
@@ -19,10 +19,10 @@ trainer:
   limit_test_batches: null
   limit_predict_batches: null
   overfit_batches: 0.0
-  val_check_interval: 0.3
+  val_check_interval: 0.5
   check_val_every_n_epoch: 1
   num_sanity_val_steps: null
-  log_every_n_steps: 50
+  log_every_n_steps: 10
   enable_checkpointing: null
   enable_progress_bar: null
   enable_model_summary: null
@@ -43,7 +43,7 @@ trainer:
 early_stop:
   monitor: "valid/FFPP/auc"
   min_delta: 0.0
-  patience: 20
+  patience: 5
   verbose: false
   mode: max
   strict: true
@@ -96,9 +96,9 @@ optimizer:
   differentiable: false
   fused: null
 lr_scheduler:
-  start_factor: 0.04
-  end_factor: 1.0
-  total_iters: 5
+  start_factor: 1.0
+  end_factor: 0.1
+  total_iters: 8
   last_epoch: -1
   verbose: false
 data: data.yaml

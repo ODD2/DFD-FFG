@@ -1,6 +1,6 @@
 class_path: src.dataset.base.ODDeepFakeDataModule
 init_args:
-  batch_size: 24
+  batch_size: 48
   num_workers: 2
   clip_duration: 4
   num_frames: 10
@@ -9,12 +9,9 @@ init_args:
     init_args:
       df_types: ['REAL','DF','FS','F2F','NT']
       compressions: ['c23']
-      strategy: CONTRAST_RAND
+      strategy: NORMAL
       augmentations:
-      - NORMAL
-      - VIDEO
-      - VIDEO_RRC
-      - FRAME
+      - NONE
       force_random_speed: null
       data_dir: 'datasets/ffpp/'
       vid_ext: '.avi'
