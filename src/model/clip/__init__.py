@@ -15,7 +15,8 @@ class FrameAttrExtractor(nn.Module):
         text_embed,
         ignore_attr=False,
         attn_record=False,
-        pretrain=None
+        pretrain=None,
+        frozen=False
     ):
         super().__init__()
         self.model, self.transform = CLIP.load(
@@ -28,13 +29,6 @@ class FrameAttrExtractor(nn.Module):
             ignore_attr=ignore_attr,
             attn_record=attn_record
         )
-        if (pretrain):
-            state_dict = torch.load(pretrain, "cpu")
-            try:
-                self.model.load_state_dict(state_dict, strict=True)
-            except:
-                conflicts = self.model.load_state_dict(state_dict, strict=False)
-                logging.warning(f"Disable strict mode with the following conflicts: {conflicts}")
 
         self.model = self.model.visual.float()
 
@@ -44,9 +38,22 @@ class FrameAttrExtractor(nn.Module):
         else:
             self.feat_dim = self.model.output_dim
 
+        if (pretrain):
+            logging.info("Loading image encoder pretrain weights...")
+            state_dict = torch.load(pretrain, "cpu")
+            try:
+                self.model.load_state_dict(state_dict, strict=True)
+            except:
+                conflicts = self.model.load_state_dict(state_dict, strict=False)
+                logging.warning(
+                    f"during visual pretrain weights loading, disabling strict mode with conflicts:\n{conflicts}"
+                )
+
         self.model.requires_grad_(False)
-        for param in self.model.prompt_parameters():
-            param.requires_grad_(True)
+
+        if not frozen:
+            for param in self.model.prompt_parameters():
+                param.requires_grad_(True)
 
     @property
     def n_px(self):
@@ -90,3 +97,16 @@ class FrameAttrExtractor(nn.Module):
             for m in self.model.prompt_dropout_modules():
                 m.train()
         return self
+
+
+if __name__ == "__main__":
+    from src.clip.model_vpt import PromptMode
+    FrameAttrExtractor(
+        "ViT-B/16",
+        prompt_mode=PromptMode.DEEP,
+        prompt_num=10,
+        prompt_layers=12,
+        prompt_dropout=0.2,
+        text_embed=False,
+        pretrain="logs/DFD-FFG/71hfy89x/checkpoints/epoch=38-step=8307_encoder.pth"
+    )

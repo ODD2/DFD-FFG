@@ -247,21 +247,34 @@ def fetch_semantic_features(
 
 # %%
 if __name__ == "__main__":
+    # encoder = FrameAttrExtractor(
+    #     architecture="ViT-B/16",
+    #     prompt_dropout=0,
+    #     prompt_layers=0,
+    #     prompt_mode=PromptMode.NONE,
+    #     prompt_num=0,
+    #     text_embed=False,
+    #     pretrain="misc/FaRL-Base-Patch16-LAIONFace20M-ep64.pth"
+    # )
+
     encoder = FrameAttrExtractor(
-        architecture="ViT-L/14",
-        prompt_dropout=0,
-        prompt_layers=0,
-        prompt_mode=PromptMode.NONE,
-        prompt_num=0,
+        architecture="ViT-B/16",
+        prompt_dropout=0.2,
+        prompt_layers=12,
+        prompt_mode=PromptMode.DEEP,
+        prompt_num=10,
         text_embed=False,
+        pretrain="logs/DFD-FFG/9smr6fw7/checkpoints/epoch=38-step=8307_encoder.pth"
     )
+
     encoder.eval()
     encoder.to("cuda")
 
     fetch_semantic_features(
         encoder, df_types=["REAL"],
         sample_num=SAMPLE_NUM,
-        visualize=True,
+        visualize=False,
+        save_path=f"./misc/9smr6fw7_real_semantic_patches_v1_{SAMPLE_NUM}.pickle",
         seed=1019
     )
 

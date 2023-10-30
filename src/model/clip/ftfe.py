@@ -67,65 +67,37 @@ class TextAffinityHead(nn.Module):
         self.text_prompts = text_prompts
         self.ln_final = model.ln_final
         self.n_ctx = model.context_length
-        self.logit_scale = model.logit_scale
         self.transformer = model.transformer
         self.text_projection = model.text_projection
         self.token_embedding = model.token_embedding
         self.positional_embedding = model.positional_embedding
         self.gender_text = gender_text
 
-        self.gender_embeds = nn.Parameter(
-            model.encode_text(CLIP.tokenize(gender_text)),
-            requires_grad=False
+        with torch.no_grad():
+            model.eval()
+            self.gender_anchors = nn.Parameter(
+                model.encode_text(CLIP.tokenize(gender_text)),
+                requires_grad=False
+            )
+
+        self.anchor_tokens = CLIP.tokenize(
+            [
+                "a genuine face of a man",
+                "a forged face of a man",
+                "a genuine face of a woman",
+                "a forged face of a woman",
+            ]
         )
-        # generic token and prompts
-        tokens = self.token_embedding(CLIP.tokenize(""))[0]
-        self.beg_token = nn.Parameter(
-            tokens[0].unsqueeze(0).expand(
-                len(self.gender_text) * self.out_dim,
-                -1,
-                -1
-            ).clone(),
-            requires_grad=False
-        )
-        self.end_token = nn.Parameter(
-            tokens[1].unsqueeze(0).expand(
-                len(self.gender_text) * self.out_dim,
-                -1,
-                -1
-            ).clone(),
-            requires_grad=False
-        )
-        self.cls_text_embed = nn.Parameter(
-            torch.zeros(
-                len(self.gender_text) * self.out_dim,
-                self.text_prompts,
-                tokens.shape[1]
-            ),
+        self.anchor_embeds = nn.Parameter(
+            self.token_embedding(self.anchor_tokens),
             requires_grad=True
-        )
-        self.null_token = nn.Parameter(
-            tokens[2].unsqueeze(0).expand(
-                len(self.gender_text) * self.out_dim,
-                self.n_ctx - self.text_prompts - 2,
-                -1
-            ).clone(),
-            requires_grad=False
         )
 
         # remove visual model to save memory
         model.visual = None
 
     def create_anchors(self):
-        x = torch.cat(
-            (
-                self.beg_token,
-                self.cls_text_embed,
-                self.end_token,
-                self.null_token
-            ),
-            dim=1
-        )  # [batch_size, n_ctx, d_model]
+        x = self.anchor_embeds
 
         x = x + self.positional_embedding
         x = x.permute(1, 0, 2)  # NLD -> LND
@@ -133,34 +105,42 @@ class TextAffinityHead(nn.Module):
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)
 
-        # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[
-            :,
-            (1 + self.text_prompts)
-        ] @ self.text_projection
-
+        x = (
+            x[torch.arange(x.shape[0]), self.anchor_tokens.argmax(dim=-1)] @
+            self.text_projection
+        )
         return x
 
     def forward(self, features):
-        anchors = self.create_anchors()
-        gender_anchors = self.gender_embeds
+        class_anchors = self.create_anchors()
+        gender_anchors = self.gender_anchors
 
         # normalized features
         features = features / features.norm(dim=1, keepdim=True)
-        anchors = anchors / anchors.norm(dim=1, keepdim=True)
+        class_anchors = class_anchors / class_anchors.norm(dim=1, keepdim=True)
         gender_anchors = gender_anchors / gender_anchors.norm(dim=1, keepdim=True)
 
         # cosine similarity as logits
-        logit_scale = self.logit_scale.exp()
+        with torch.no_grad():
+            gender_logits = 100 * features @ gender_anchors.t()
+            gender_affinity = gender_logits.softmax(dim=-1)
+            gender_label = gender_affinity.argmax(dim=-1).long()
 
-        gender_logits = logit_scale * features @ gender_anchors.t()
-        gender_affinity = gender_logits.softmax(dim=-1).unsqueeze(1).transpose(1, 2)
+        logits = 30 * features @ class_anchors.t()
+        return dict(
+            logits=logits,
+            gender_affinity=gender_affinity,
+            gender_label=gender_label
+        )
 
-        logits = logit_scale * features @ anchors.t()
-        logits = logits.view(-1, len(self.gender_text), self.out_dim)
-        logits = (logits * gender_affinity).mean(dim=-2)
+    def train(self, mode=True):
+        super().train(mode)
+        if (mode):
+            self.ln_final.eval()
+            self.transformer.eval()
+            self.token_embedding.eval()
 
-        return logits
+        return self
 
 
 class GenderAffineLinearHead(nn.Module):
@@ -179,22 +159,15 @@ class GenderAffineLinearHead(nn.Module):
         )
         model = model.float().requires_grad_(False)
         self.out_dim = out_dim
-        self.text_prompts = text_prompts
-        self.ln_final = model.ln_final
-        self.n_ctx = model.context_length
         self.logit_scale = model.logit_scale
-        self.transformer = model.transformer
-        self.text_projection = model.text_projection
-        self.token_embedding = model.token_embedding
-        self.positional_embedding = model.positional_embedding
         self.gender_text = gender_text
 
-        self.gender_embeds = nn.Parameter(
+        self.gender_anchors = nn.Parameter(
             model.encode_text(CLIP.tokenize(gender_text)),
             requires_grad=False
         )
         # generic token and prompts
-        width = self.gender_embeds.shape[-1]
+        width = self.gender_anchors.shape[-1]
         self.proj = nn.Sequential(
             nn.Linear(width, int(width * 0.5)),
             nn.GELU(),
@@ -206,7 +179,7 @@ class GenderAffineLinearHead(nn.Module):
         model.visual = None
 
     def forward(self, features, mean_mode="gender"):
-        gender_anchors = self.gender_embeds
+        gender_anchors = self.gender_anchors
 
         # normalized features
         gender_anchors = gender_anchors / gender_anchors.norm(dim=1, keepdim=True)
@@ -255,9 +228,9 @@ class TextAlignClassifier(nn.Module):
 
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
-        logits = self.proj(results["embeds"].mean(1))
+        proj_data = self.proj(results["embeds"].mean(1))
         return dict(
-            logits=logits,
+            proj_data=proj_data,
             **results
         )
 
@@ -596,19 +569,49 @@ class TextMeanVideoLearner(LinearMeanVideoLearner):
         names = batch["names"]
 
         output = self(x, **z)
-        logits = output["logits"]
-
-        # classification loss
-        cls_loss = nn.functional.cross_entropy(
-            logits,
-            y,
-            reduction="none",
-            weight=(
-                self.label_weights.to(y.device)
-                if stage == "train" else
-                None
-            )
+        proj_data = output["proj_data"]
+        gender_logits = proj_data["logits"]
+        gender_affinity = proj_data["gender_affinity"]
+        gender_label = proj_data["gender_label"]
+        logits = torch.log(
+            gender_logits
+            .softmax(dim=-1)
+            .view(-1, 2, 2)
+            .mean(dim=-2)
         )
+
+        if stage == "train":
+            _y = torch.tensor(
+                [
+                    is_fake + 2 * is_female
+                    for is_fake, is_female in zip(y, gender_label)
+                ],
+                device=y.device,
+                dtype=y.dtype
+            )
+            # classification loss
+            cls_loss = nn.functional.cross_entropy(
+                gender_logits,
+                _y,
+                reduction="none",
+                weight=(
+                    self.label_weights.to(y.device).repeat(2)
+                    if stage == "train" else
+                    None
+                )
+            )
+        else:
+            # classification loss
+            cls_loss = nn.functional.cross_entropy(
+                logits,
+                y,
+                reduction="none",
+                weight=(
+                    self.label_weights.to(y.device)
+                    if stage == "train" else
+                    None
+                )
+            )
 
         if (stage == "train"):
             self.log(
@@ -628,4 +631,54 @@ class TextMeanVideoLearner(LinearMeanVideoLearner):
 
 
 if __name__ == "__main__":
-    TextAffinityHead().create_anchors()
+    import torch
+    # import clip as CLIP
+    from src.clip import clip as CLIP
+    from PIL import Image
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # sanity check on vanilla CLIP
+    vanilla_clip, preprocess = CLIP.load("ViT-B/16", device=device)
+    model = vanilla_clip.float()
+
+    image = Image.open("woman3.png")
+    image = preprocess(image).unsqueeze(0).to(device)
+
+    text = CLIP.tokenize(["a man", "a woman"]).to(device)
+
+    with torch.no_grad():
+        image_features = vanilla_clip.encode_image(image)
+        text_features = vanilla_clip.encode_text(text)
+
+        logits_per_image, logits_per_text = vanilla_clip(image, text)
+        probs = logits_per_image.softmax(dim=-1).cpu().numpy()
+
+    print("Label probs:", probs)
+
+    # sanity check on text affinity head
+    head = TextAffinityHead(2, 50).to(device)
+
+    with torch.no_grad():
+        image_features = model.encode_image(image)
+        data = head(image_features)
+
+    print(data["gender_affinity"])
+
+    # sanity check on image attr extractor
+    extractor = FrameAttrExtractor(
+        "ViT-B/16",
+        PromptMode.NONE,
+        0,
+        0,
+        0,
+        True
+    ).to(device=device)
+
+    feature0 = model.encode_image(image)
+    feature1 = extractor(image)["embeds"]
+    print(False in (feature0 == feature1))
+
+    # sanity check on image attr extractor
+    tmvl = TextMeanVideoLearner().to(device=device)
+    feature2 = tmvl(image.unsqueeze(1))["embeds"]
+    print(False in (feature0 == feature2))

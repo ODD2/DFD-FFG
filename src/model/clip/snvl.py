@@ -309,80 +309,6 @@ class ViTSideNetworkVideoLearner(nn.Module):
         }
 
 
-class TextAffinityHead(nn.Module):
-    def __init__(self, out_dim=2, n_ctx=77, architecture: str = "ViT-B/16"):
-        super().__init__()
-        model, _ = CLIP.load(architecture, "cpu")
-        model.visual = None
-        model = model.float().requires_grad_(False)
-        self.n_ctx = n_ctx
-        self.ln_final = model.ln_final
-        self.logit_scale = model.logit_scale
-        self.transformer = model.transformer
-        self.text_projection = model.text_projection
-        self.token_embedding = model.token_embedding
-        self.positional_embedding = model.positional_embedding
-
-        # Inversion
-        tokens = self.token_embedding(CLIP.tokenize(""))[0]
-        self.beg_token = nn.Parameter(
-            tokens[0].unsqueeze(0).expand(out_dim, -1, -1),
-            requires_grad=False
-        )
-        self.end_token = nn.Parameter(
-            tokens[1].unsqueeze(0).expand(out_dim, -1, -1),
-            requires_grad=False
-        )
-        self.null_token = nn.Parameter(
-            tokens[2].unsqueeze(0).expand(out_dim, 77 - self.n_ctx, -1),
-            requires_grad=False
-        )
-        self.cls_text_embed = nn.Parameter(
-            torch.randn(
-                out_dim,
-                self.n_ctx - 2,
-                tokens.shape[1]
-            ),
-            requires_grad=True
-        )
-
-    def create_anchors(self):
-        x = torch.cat(
-            (
-                self.beg_token,
-                self.cls_text_embed,
-                self.end_token,
-                self.null_token
-            ),
-            dim=1
-        )  # [batch_size, n_ctx, d_model]
-
-        x = x + self.positional_embedding
-        x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x)
-        x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final(x)
-
-        # x.shape = [batch_size, n_ctx, transformer.width]
-        # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), self.n_ctx - 1] @ self.text_projection
-
-        return x
-
-    def forward(self, features):
-        anchors = self.create_anchors()
-
-        # normalized features
-        features = features / features.norm(dim=1, keepdim=True)
-        anchors = anchors / anchors.norm(dim=1, keepdim=True)
-
-        # cosine similarity as logits
-        logit_scale = self.logit_scale.exp()
-        logits = logit_scale * features @ anchors.t()
-        logits = 3 * (logits / logits.norm(dim=-1, keepdim=True))
-        return logits
-
-
 class VideoFeatureExtractor(nn.Module):
     def __init__(
         self,
@@ -395,7 +321,9 @@ class VideoFeatureExtractor(nn.Module):
         prompt_layers,
         prompt_dropout,
         text_embed=False,
-        attn_record=False
+        attn_record=False,
+        pretrain=None,
+        frozen=False
     ):
         super().__init__()
         self.encoder = FrameAttrExtractor(
@@ -405,7 +333,9 @@ class VideoFeatureExtractor(nn.Module):
             prompt_layers=prompt_layers,
             prompt_dropout=prompt_dropout,
             text_embed=text_embed,
-            attn_record=attn_record
+            attn_record=attn_record,
+            pretrain=pretrain,
+            frozen=frozen
         )
         self.decoder = ViTSideNetworkVideoLearner(
             width=self.encoder.model.transformer.width,
@@ -496,7 +426,9 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
         prompt_dropout: float = 0,
         with_frame: bool = False,
         text_embed: bool = False,
-        label_weights: List[float] = [1, 1]
+        label_weights: List[float] = [1, 1],
+        pretrain=None,
+        frozen=False
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -510,7 +442,9 @@ class CLIPBinaryVideoLearner(ODBinaryMetricClassifier):
             prompt_layers=prompt_layers,
             prompt_dropout=prompt_dropout,
             with_frame=with_frame,
-            text_embed=text_embed
+            text_embed=text_embed,
+            pretrain=pretrain,
+            frozen=frozen
         )
         self.model = BinaryLinearClassifier(**params)
         self.label_weights = torch.tensor(label_weights)
@@ -607,26 +541,5 @@ class CLIPBinaryVideoLearnerFFG(CLIPBinaryVideoLearner):
         return result
 
 
-class BinaryTextAffinityClassifier(VideoFeatureExtractor):
-    def __init__(
-        self,
-        *args,
-        architecture="ViT-B/16",
-        **kargs
-    ):
-        super().__init__(*args, architecture=architecture, **kargs)
-        self.cls_head = TextAffinityHead(
-            out_dim=2,
-            architecture=architecture
-        )
-
-    def forward(self, *args, **kargs):
-        result = super().forward(*args, **kargs)
-        result["logits"] = self.cls_head(result["video_features"])
-        return result
-
-
 if __name__ == "__main__":
     import src.clip as CLIP
-    m = TextAffinityHead()
-    m.forward(torch.randn(10, 512))
