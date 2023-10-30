@@ -659,6 +659,8 @@ class FFPP(DeepFakeDataset):
                 )
             )
 
+        del vid_reader
+
         entity_clips = torch.stack(entity_clips)
         entity_masks = torch.stack(entity_masks)
 

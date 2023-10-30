@@ -101,5 +101,4 @@ lr_scheduler:
   total_iters: 5
   last_epoch: -1
   verbose: false
-model: model.yaml
 data: data.yaml

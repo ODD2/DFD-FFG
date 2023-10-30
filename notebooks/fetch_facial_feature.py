@@ -1,23 +1,27 @@
 # %%
+from torchvision.transforms import Compose
+# %%
 import os
 import sys
 import cv2
 import torch
 import pickle
 import random
+import torchvision
 import numpy as np
 import albumentations as alb
 import matplotlib.pyplot as plt
 import torchvision.transforms as T
 
+
 from tqdm import tqdm
+from src.clip.model_vpt import PromptMode
 from notebooks.tools import extract_features
 from src.model.clip.snvl import FrameAttrExtractor
-from src.clip.model_vpt import PromptMode
 from src.dataset.ffpp import FFPP, FFPPSampleStrategy, FFPPAugmentation
 from sklearn.cluster import KMeans
 
-SAMPLE_NUM = 500
+SAMPLE_NUM = 10
 
 
 def fetch_semantic_features(
@@ -244,13 +248,12 @@ def fetch_semantic_features(
 # %%
 if __name__ == "__main__":
     encoder = FrameAttrExtractor(
-        architecture="ViT-B/16",
+        architecture="ViT-L/14",
         prompt_dropout=0,
         prompt_layers=0,
         prompt_mode=PromptMode.NONE,
         prompt_num=0,
         text_embed=False,
-        pretrain="misc/FaRL-Base-Patch16-LAIONFace20M-ep64.pth"
     )
     encoder.eval()
     encoder.to("cuda")
@@ -258,9 +261,16 @@ if __name__ == "__main__":
     fetch_semantic_features(
         encoder, df_types=["REAL"],
         sample_num=SAMPLE_NUM,
-        visualize=False,
-        save_path=f"./misc/FL_real_semantic_patches_v1_{SAMPLE_NUM}.pickle",
+        visualize=True,
         seed=1019
     )
+
+    # fetch_semantic_features(
+    #     encoder, df_types=["REAL"],
+    #     sample_num=SAMPLE_NUM,
+    #     visualize=False,
+    #     save_path=f"./misc/FL_real_semantic_patches_v1_{SAMPLE_NUM}.pickle",
+    #     seed=1019
+    # )
 
 # %%

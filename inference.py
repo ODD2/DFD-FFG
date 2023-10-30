@@ -58,7 +58,7 @@ def main(params):
 
     # setup model
     model = cli.model
-    model = model.load_from_checkpoint(params.ckpt_path, strict=False)
+    model = model.__class__.load_from_checkpoint(params.ckpt_path, strict=False)
     model.eval()
     device = model.device
 

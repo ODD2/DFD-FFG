@@ -144,7 +144,7 @@ def driver(features, method, subjects=None, patch_num=14, **kargs):
 # %%
 
 encoder = FrameAttrExtractor(
-    architecture="ViT-B/16",
+    architecture="ViT-L/14",
     prompt_dropout=0,
     prompt_layers=0,
     prompt_mode=PromptMode.NONE,
@@ -181,21 +181,27 @@ features = extract_features(encoder, clip[0][0])
 # evals = driver(features, one_patch_cos_sim, t=0, c=21)
 # plotter(evals, "", "layer-frame", unit_size=2)
 
-semantic_patches = fetch_semantic_features(encoder, df_types=["REAL"], sample_num=10)
+semantic_patches = fetch_semantic_features(
+    encoder, 
+    df_types=["REAL"], 
+    sample_num=100,
+    centroid_mode=True
+)
+
 # %%
 plot_params = dict(vmin=0, vmax=1)
-part = "eyes"
+part = "skin"
 # %%
-evals = driver(features, semantic_patch_cos_sim, part=part, s="q", semantic_patches=semantic_patches)
+evals = driver(features, semantic_patch_cos_sim, part=part, s="q", semantic_patches=semantic_patches,patch_num=16)
 plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
 
-evals = driver(features, semantic_patch_cos_sim, part=part, s="k", semantic_patches=semantic_patches)
+evals = driver(features, semantic_patch_cos_sim, part=part, s="k", semantic_patches=semantic_patches,patch_num=16)
 plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
 
-evals = driver(features, semantic_patch_cos_sim, part=part, s="v", semantic_patches=semantic_patches)
+evals = driver(features, semantic_patch_cos_sim, part=part, s="v", semantic_patches=semantic_patches,patch_num=16)
 plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
 
-evals = driver(features, semantic_patch_cos_sim, part=part, s="out", semantic_patches=semantic_patches)
+evals = driver(features, semantic_patch_cos_sim, part=part, s="out", semantic_patches=semantic_patches,patch_num=16)
 plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
 
-# %%
+ # %%
