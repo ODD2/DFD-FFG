@@ -23,7 +23,7 @@ def extract_features(encoder, frame):
     return kvs
 
 
-def load_model(model_cls, ckpt_path="", device="cuda", extra_params={}):
+def load_model(model_cls, ckpt_path="", extra_params={}):
     if (ckpt_path == ""):
         model = model_cls(
             attn_record=True,
