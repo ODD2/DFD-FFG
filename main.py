@@ -49,7 +49,7 @@ def cli_main():
 
     # monitor model gradient and parameter histograms
     # (this severely slow down the training speed)
-    # cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False)
+    cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False)
 
     # load & configure datasets
     cli.datamodule.affine_model(cli.model)
@@ -64,7 +64,7 @@ def cli_main():
 
     # after training:
     # 1. unwatch model
-    # cli.trainer.logger.experiment.unwatch(cli.model)
+    cli.trainer.logger.experiment.unwatch(cli.model)
     # 2. save the config
     cli.trainer.logger.experiment.save(
         glob_str=os.path.join(cli.trainer.log_dir, 'setting.yaml'),
@@ -81,18 +81,11 @@ def cli_main():
     )
 
     # finally
-    send_to_telegram(
-        "Training  Complete. (id:{}/{}, notes:'{}')".format(
-            cli.trainer.logger.name,
-            cli.trainer.logger.version.upper(),
-            cli.config.notes
-        )
-    )
     cli.trainer.logger.experiment.finish()
     send_to_telegram(
         "Training  Complete. (id:{}/{}, notes:'{}')".format(
             cli.trainer.logger.name,
-            cli.trainer.logger.version.upper(),
+            cli.trainer.logger.version,
             cli.config.notes
         )
     )

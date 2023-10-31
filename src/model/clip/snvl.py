@@ -62,6 +62,7 @@ class MultiheadAttention(nn.Module):
         # TODO: For reproduction, remember to remove both weight loading and bias=True.
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=True)
         self.out_proj.load_state_dict(reference_module.out_proj.state_dict())
+        self.out_proj.requires_grad_(False)
 
         self.embed_dim = embed_dim
         self.n_head = n_head
