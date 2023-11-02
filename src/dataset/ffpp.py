@@ -697,6 +697,146 @@ class FFPP(DeepFakeDataset):
         return '/'.join([str(i) for i in self.video_info(idx)[1:-1]])
 
 
+# dataset version with video reader from the decord package.
+class FFPP2(FFPP):
+    def get_entity(self, idx, replay=None, with_entity_info=False):
+        from decord import VideoReader
+        from decord.bridge import set_bridge
+        set_bridge('torch')
+
+        video_idx, df_type, comp, video_name, num_clips = self.video_info(idx)
+        video_meta = self.video_table[df_type][comp][video_name]
+        logging.debug(f"Entity/Video Index:{idx}/{video_idx}")
+        logging.debug(f"Entity DF/COMP:{df_type}/{comp}")
+
+        # - video path
+        vid_path = video_meta["path"]
+        # - create video reader
+        vid_reader = VideoReader(vid_path)
+        # - frames per second
+        video_sample_freq = vid_reader.get_avg_fps()
+
+        entity_clips = []
+        entity_masks = []
+
+        # desire all clips in the video under pack mode, else fetch only the clip of index.
+        if (self.pack):
+            clips_desire = range(num_clips)
+        else:
+            clips_desire = [
+                idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx - 1])]
+
+        for clip_of_video in clips_desire:
+            # video frame processing
+            frames = []
+
+            # derive the video offset
+            video_offset_duration = clip_of_video * self.clip_duration
+
+            # augment the data only while training.
+            if (self.random_speed):
+                # the slow motion factor for video data augmentation
+                video_speed_factor = random.random() * 0.5 + 0.5
+                video_shift_factor = random.random() * (1 - video_speed_factor)
+            else:
+                video_speed_factor = 1
+                video_shift_factor = 0
+            logging.debug(f"Video Speed Motion Factor: {video_speed_factor}")
+            logging.debug(f"Video Shift Factor: {video_shift_factor}")
+
+            # the amount of frames to skip
+            video_sample_offset = int(
+                (video_offset_duration + self.clip_duration *
+                 video_shift_factor) * video_sample_freq
+            )
+            # the amount of frames for the duration of a clip
+            video_clip_samples = int(
+                video_sample_freq * self.clip_duration * video_speed_factor
+            )
+            # the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
+            if (self.num_frames == 1):
+                video_sample_stride = 0
+            else:
+                video_sample_stride = (
+                    (video_clip_samples - 1) / (self.num_frames - 1)
+                )
+
+            logging.debug(f"Loading Video: {vid_path}")
+            logging.debug(f"Sample Offset: {video_sample_offset}")
+            logging.debug(f"Sample Stride: {video_sample_stride}")
+
+            # fetch frames of clip duration
+            sample_idx = [
+                video_sample_offset + i * video_sample_stride
+                for i in range(self.num_frames)
+            ]
+            frames = vid_reader.get_batch(sample_idx)
+            frames = frames.permute(0, 3, 1, 2)
+            frames = [frame for frame in frames]
+
+            # augment the data only while training.
+            frames, replay = self.training_augmentations(frames, replay)
+            logging.debug("Augmentations Applied.")
+
+            # stack list of torch frames to tensor
+            frames = torch.stack(frames)
+
+            # transformation
+            frames = self.transform(frames)
+
+            # padding and masking missing frames.
+            mask = torch.tensor(
+                [1.] * len(frames) +
+                [0.] * (self.num_frames - len(frames)),
+                dtype=torch.bool
+            )
+            if frames.shape[0] < self.num_frames:
+                diff = self.num_frames - len(frames)
+                padding = torch.zeros(
+                    (diff, *frames.shape[1:]),
+                    dtype=frames.dtype
+                )
+                frames = torch.concatenate(
+                    frames,
+                    padding
+                )
+
+            entity_clips.append(frames)
+            entity_masks.append(mask)
+            logging.debug(
+                "Video Clip: {}({}s~{}s), Completed!".format(
+                    vid_path,
+                    self.clip_duration * clip_of_video,
+                    (self.clip_duration + 1) * clip_of_video
+                )
+            )
+
+        del vid_reader
+
+        entity_clips = torch.stack(entity_clips)
+        entity_masks = torch.stack(entity_masks)
+
+        entity_info = {
+            "comp": comp,
+            "video_name": video_name,
+            "df_type": df_type,
+            "vid_path": vid_path
+        }
+        entity_data = {
+            "clips": entity_clips,
+            "label": 0 if (df_type == "REAL") else 1,
+            "masks": entity_masks,
+            "idx": idx
+        }
+
+        if with_entity_info:
+            return {**entity_data, **entity_info}
+        else:
+            return entity_data
+
+
+
+
 class FFPPDataModule(DeepFakeDataModule):
     def __init__(
         self,

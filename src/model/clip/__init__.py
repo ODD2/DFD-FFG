@@ -7,6 +7,7 @@ import src.clip.clip as CLIP
 class FrameAttrExtractor(nn.Module):
     def __init__(
         self,
+        frame_num,
         architecture,
         prompt_mode,
         prompt_num,
@@ -27,7 +28,8 @@ class FrameAttrExtractor(nn.Module):
             prompt_layers=prompt_layers,
             prompt_dropout=prompt_dropout,
             ignore_attr=ignore_attr,
-            attn_record=attn_record
+            attn_record=attn_record,
+            frame_num=frame_num
         )
 
         self.model = self.model.visual.float()
@@ -44,7 +46,8 @@ class FrameAttrExtractor(nn.Module):
             try:
                 self.model.load_state_dict(state_dict, strict=True)
             except:
-                conflicts = self.model.load_state_dict(state_dict, strict=False)
+                conflicts = self.model.load_state_dict(
+                    state_dict, strict=False)
                 logging.warning(
                     f"during visual pretrain weights loading, disabling strict mode with conflicts:\n{conflicts}"
                 )
@@ -71,9 +74,10 @@ class FrameAttrExtractor(nn.Module):
         # pass throught for attributes
         if (len(x.shape) > 4):
             b, t = x.shape[:2]
-            embeds = self.model(x.flatten(0, 1)).unflatten(0, (b, t))
+            embeds, summaries = self.model(x.flatten(0, 1))
+            embeds = embeds.unflatten(0, (b, t))
         else:
-            embeds = self.model(x)
+            embeds, summaries = self.model(x)
         # retrieve all layer attributes
         layer_attrs = []
         for blk in self.model.transformer.resblocks:
@@ -87,7 +91,8 @@ class FrameAttrExtractor(nn.Module):
             layer_attrs.append(attrs)
         return dict(
             layer_attrs=layer_attrs,
-            embeds=embeds
+            embeds=embeds,
+            summaries=summaries
         )
 
     def train(self, mode=True):
