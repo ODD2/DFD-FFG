@@ -9,10 +9,6 @@ class FrameAttrExtractor(nn.Module):
         self,
         frame_num,
         architecture,
-        prompt_mode,
-        prompt_num,
-        prompt_layers,
-        prompt_dropout,
         text_embed,
         ignore_attr=False,
         attn_record=False,
@@ -23,10 +19,6 @@ class FrameAttrExtractor(nn.Module):
         self.model, self.transform = CLIP.load(
             architecture,
             "cpu",
-            prompt_mode=prompt_mode,
-            prompt_num=prompt_num,
-            prompt_layers=prompt_layers,
-            prompt_dropout=prompt_dropout,
             ignore_attr=ignore_attr,
             attn_record=attn_record,
             frame_num=frame_num
@@ -74,10 +66,10 @@ class FrameAttrExtractor(nn.Module):
         # pass throught for attributes
         if (len(x.shape) > 4):
             b, t = x.shape[:2]
-            embeds, summaries = self.model(x.flatten(0, 1))
+            embeds, summaries = self.model(x.flatten(0, 1), summary=True)
             embeds = embeds.unflatten(0, (b, t))
         else:
-            embeds, summaries = self.model(x)
+            embeds, summaries = self.model(x, summary=True)
         # retrieve all layer attributes
         layer_attrs = []
         for blk in self.model.transformer.resblocks:

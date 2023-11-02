@@ -53,10 +53,6 @@ class NativeSummaryVideoLearner(ODBinaryMetricClassifier):
         self,
         frame_num,
         architecture: str = 'ViT-B/16',
-        prompt_mode: PromptMode = PromptMode.NONE,
-        prompt_num: int = 0,
-        prompt_layers: int = 0,
-        prompt_dropout: float = 0,
         text_embed: bool = False,
         attn_record: bool = False,
         pretrain: str = None,
@@ -67,10 +63,6 @@ class NativeSummaryVideoLearner(ODBinaryMetricClassifier):
         params = dict(
             frame_num=frame_num,
             architecture=architecture,
-            prompt_mode=prompt_mode,
-            prompt_num=prompt_num,
-            prompt_layers=prompt_layers,
-            prompt_dropout=prompt_dropout,
             text_embed=text_embed,
             attn_record=attn_record,
             pretrain=pretrain

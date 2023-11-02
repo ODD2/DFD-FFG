@@ -200,8 +200,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
     ):
         super().__init__()
 
-        self.in_proj_weight = nn.Parameter(
-            torch.empty((3 * embed_dim, embed_dim)))
+        self.in_proj_weight = nn.Parameter(torch.empty((3 * embed_dim, embed_dim)))
         self.in_proj_bias = nn.Parameter(torch.empty(3 * embed_dim))
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
@@ -213,8 +212,11 @@ class MultiheadAttentionAttrExtract(nn.Module):
 
     def forward(self, x, attn_mask=None):
         x = x.transpose(0, 1)
-        q, k, v = F.linear(x, self.in_proj_weight,
-                           self.in_proj_bias).chunk(3, dim=-1)
+        q, k, v = F.linear(
+            x,
+            self.in_proj_weight,
+            self.in_proj_bias
+        ).chunk(3, dim=-1)
 
         view_as = (*q.shape[:2], self.n_head, -1)
         q = q.view(*view_as)
@@ -254,9 +256,6 @@ class VResidualAttentionBlock(nn.Module):
         n_head: int,
         block_index: int,
         attn_mask: torch.Tensor = None,
-        prompt_num: int = 0,
-        prompt_mode: PromptMode = PromptMode.NONE,
-        prompt_dropout: float = 0,
         attn_record: bool = False,
         ignore_attr: bool = False,
     ):
@@ -283,26 +282,11 @@ class VResidualAttentionBlock(nn.Module):
         # preserve attrs
         self.attr = {}
 
-        # prompting
-        self.prompt_num = prompt_num
-        self.prompt_mode = prompt_mode
-        if (
-            self.prompt_mode == PromptMode.NONE or
-            self.prompt_mode == PromptMode.SHALLOW
-        ):
-            self.prompts = None
-            self.prompt_drop = None
-
-        else:
-            self.prompts = nn.Parameter(
-                (d_model**-0.5) * torch.randn(prompt_num, 1, d_model))
-            self.prompt_drop = nn.Dropout(prompt_dropout)
-
     def prompt_parameters(self):
-        return [] if (type(self.prompts) == type(None)) else [self.prompts]
+        return []
 
     def prompt_dropout_modules(self):
-        return [] if (type(self.prompt_drop) == type(None)) else [self.prompt_drop, self.attn]
+        return []
 
     def pop_attr(self):
         ret = self.get_attr()
@@ -321,10 +305,7 @@ class VResidualAttentionBlock(nn.Module):
             out = out.transpose(0, 1)
             emb = emb.transpose(0, 1)
 
-            if (self.prompt_mode == PromptMode.NONE):
-                num_tokens = q.shape[1]
-            else:
-                num_tokens = q.shape[1] - self.prompt_num
+            num_tokens = q.shape[1]
 
             self.attr = dict(
                 q=q[:, :num_tokens],
@@ -345,23 +326,6 @@ class VResidualAttentionBlock(nn.Module):
 
     def forward(self, x: torch.Tensor):
         self.pop_attr()
-        num_tokens = x.shape[0] - self.prompt_num
-        if (
-            self.prompt_mode == PromptMode.NONE or
-            self.prompt_mode == PromptMode.SHALLOW
-        ):
-            pass
-        elif (self.prompt_mode == PromptMode.DEEP):
-            x[num_tokens:] = self.prompt_drop(
-                self.prompts.repeat(1, x.shape[1], 1)
-            )
-        elif (self.prompt_mode == PromptMode.DEEPC):
-            x[num_tokens:] += self.prompt_drop(
-                self.prompts.repeat(1, x.shape[1], 1)
-            )
-        elif (self.prompt_mode == PromptMode.EXPRES):
-            raise NotImplementedError()
-
         data = self.attention(self.ln_1(x))
         x = x + data["out"]
         x = x + self.mlp(self.ln_2(x))
@@ -381,10 +345,6 @@ class VTransformer(nn.Module):
         layers: int,
         heads: int,
         patch_num: int,
-        prompt_num: int = 0,
-        prompt_layers: int = 0,
-        prompt_dropout: float = 0,
-        prompt_mode: PromptMode = PromptMode.NONE,
         attn_record: bool = False,
         ignore_attr: bool = False,
         frame_num: int = 1,
@@ -395,10 +355,6 @@ class VTransformer(nn.Module):
         self.heads = heads
         self.layers = layers
 
-        self.prompt_mode = prompt_mode
-        self.prompt_num = prompt_num
-        self.prompt_layers = prompt_layers
-
         self.frame_num = frame_num
         self.patch_num = patch_num
         self.summa_num = summa_num
@@ -406,28 +362,12 @@ class VTransformer(nn.Module):
             (width**-0.5) * torch.randn(summa_num, 1, width)
         )
 
-        if (self.prompt_mode == PromptMode.SHALLOW):
-            self.prompts = nn.Parameter(
-                (width**-0.5) * torch.randn(prompt_num, 1, width)
-            )
-            self.prompt_drop = nn.Dropout(prompt_dropout)
-        else:
-            self.prompts = None
-            self.prompt_drop = None
-
         # determine the number of tokens throught the transformer
         tot_tokens = (
             1 +  # cls
             self.patch_num +  # patch
-            summa_num +   # summary
-            (   # prompt
-                0
-                if (type(self.prompts) == type(None)) else
-                self.prompt_num
-            )
+            summa_num  # summary
         )
-        if (not type(self.prompts) == type(None)):
-            tot_tokens += self.prompts.shape[0]  # prompts
 
         # create attention mask
         self.attn_mask = torch.zeros(
@@ -436,9 +376,9 @@ class VTransformer(nn.Module):
         # mask references to the patch embeddings & cls
         s_int = [
             1 + self.patch_num,
-            1 + self.patch_num + self.summaries.shape[0]
+            1 + self.patch_num + summa_num
         ]
-        self.attn_mask[:, s_int[0]:s_int[1]].fill_(float("-inf"))
+        self.attn_mask[:s_int[0], s_int[0]:s_int[1]].fill_(float("-inf"))
         # mask references from the cls
         self.attn_mask[s_int[0]:s_int[1], 0].fill_(float("-inf"))
 
@@ -449,37 +389,19 @@ class VTransformer(nn.Module):
                 block_index=i,
                 attn_mask=self.attn_mask,
                 attn_record=attn_record,
-                ignore_attr=ignore_attr,
-                ** dict(
-                    prompt_num=(
-                        prompt_num
-                        if i < prompt_layers else
-                        0
-                    ),
-                    prompt_mode=(
-                        prompt_mode
-                        if i < prompt_layers else
-                        PromptMode.NONE
-                    ),
-                    prompt_dropout=prompt_dropout
-                )
+                ignore_attr=ignore_attr
             )
             for i in range(layers)
         ])
 
     def prompt_parameters(self):
         items = [self.summaries]
-
-        if (not type(self.prompts) == type(None)):
-            items.append(self.prompts)
-
         for blk in self.resblocks:
             items.extend(blk.prompt_parameters())
         return items
 
     def prompt_dropout_modules(self):
-        items = [] if (type(self.prompt_drop) == type(None)) else [
-            self.prompt_drop]
+        items = []
         for blk in self.resblocks:
             items.extend(blk.prompt_dropout_modules())
         return items
@@ -496,12 +418,13 @@ class VTransformer(nn.Module):
         )
         summary_embeds = summary_embeds.mean(dim=2)
         summary_embeds = summary_embeds.repeat_interleave(
-            self.frame_num, dim=1)
+            self.frame_num,
+            dim=1
+        )
         return torch.cat(
             (
                 embeds[:num_tokens,],
-                summary_embeds,
-                embeds[num_tokens + num_summaries:,],
+                summary_embeds
             ),
             dim=0
         )
@@ -518,47 +441,10 @@ class VTransformer(nn.Module):
             )
         )
 
-        # frame shared prompts
-        if self.prompt_mode == PromptMode.NONE:
-            pass
-        elif self.prompt_mode == PromptMode.SHALLOW:
-            x = torch.cat(
-                (
-                    x,
-                    self.prompt_drop(
-                        self.prompts.repeat(1, x.shape[1], 1)
-                    )
-                ),
-                dim=0
-            )
-        else:
-            x = torch.cat(
-                (
-                    x,
-                    torch.zeros(
-                        (self.prompt_num, *x.shape[1:]),
-                        device=x.device
-                    )
-                ),
-                dim=0
-            )
-
-        for blk in self.resblocks[:self.prompt_layers]:
-            x = self.video_aggregate(blk(x), num_tokens=num_tokens)
-
-        x = x[:num_tokens + num_summaries]
-
-        for blk in self.resblocks[self.prompt_layers:]:
+        for blk in self.resblocks:
             x = self.video_aggregate(blk(x), num_tokens=num_tokens)
 
         s = x[num_tokens:(num_tokens + num_summaries)]
-
-        assert s.shape[0] == num_summaries
-        assert not (
-            False in (
-                s[0, 0::self.frame_num] == s[0, 1::self.frame_num]
-            )
-        )
 
         x = x[:num_tokens]
 
@@ -615,10 +501,6 @@ class VisionTransformer(nn.Module):
         heads: int,
         output_dim: int,
         frame_num: int = 1,
-        prompt_num: int = 0,
-        prompt_mode: PromptMode = PromptMode.NONE,
-        prompt_layers: int = 0,
-        prompt_dropout: float = 0.0,
         attn_record: bool = False,
         ignore_attr: bool = False
     ):
@@ -637,9 +519,6 @@ class VisionTransformer(nn.Module):
             scale * torch.randn((input_resolution // patch_size) ** 2 + 1, width))
         self.ln_pre = LayerNorm(width)
 
-        # parameter check
-        assert ((not prompt_mode == PromptMode.NONE) or (
-            prompt_num == 0 and prompt_layers == 0))
         self.transformer = VTransformer(
             # structure
             width,
@@ -648,11 +527,6 @@ class VisionTransformer(nn.Module):
             # frame & video
             frame_num=frame_num,
             patch_num=self.patch_num,
-            # prompts
-            prompt_num=prompt_num,
-            prompt_mode=prompt_mode,
-            prompt_layers=prompt_layers,
-            prompt_dropout=prompt_dropout,
             # generic
             attn_record=attn_record,
             ignore_attr=ignore_attr
@@ -661,10 +535,9 @@ class VisionTransformer(nn.Module):
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, summary: bool = False):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
-        # shape = [*, width, grid ** 2]
-        x = x.reshape(x.shape[0], x.shape[1], -1)
+        x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
         x = torch.cat(
             [
@@ -693,8 +566,12 @@ class VisionTransformer(nn.Module):
 
         if self.proj is not None:
             x = x @ self.proj
+            s = s @ self.proj
 
-        return x, s
+        if (summary):
+            return x, s
+        else:
+            return x
 
     def prompt_parameters(self):
         return self.transformer.prompt_parameters()
@@ -834,8 +711,7 @@ class CLIP(nn.Module):
         text_features = self.encode_text(text)
 
         # normalized features
-        image_features = image_features / \
-            image_features.norm(dim=1, keepdim=True)
+        image_features = image_features / image_features.norm(dim=1, keepdim=True)
         text_features = text_features / text_features.norm(dim=1, keepdim=True)
 
         # cosine similarity as logits

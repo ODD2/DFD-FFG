@@ -7,7 +7,7 @@ init_args:
   dir: null
   id: null
   anonymous: null
-  project: 'DFD-FFG(v100)'
+  project: 'DFD-FFG'
   log_model: false
   prefix: ''
   checkpoint_name: null
