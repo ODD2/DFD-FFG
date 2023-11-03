@@ -361,6 +361,17 @@ class VTransformer(nn.Module):
         self.summaries = nn.Parameter(
             (width**-0.5) * torch.randn(summa_num, 1, width)
         )
+        self.summary_projs = nn.ModuleList([
+            nn.Linear(
+                width,
+                width,
+                bias=False
+            )
+            for _ in range(self.layers)]
+        )
+
+        for proj in self.summary_projs:
+            proj.weight.data = torch.eye(width)
 
         # determine the number of tokens throught the transformer
         tot_tokens = (
@@ -395,7 +406,7 @@ class VTransformer(nn.Module):
         ])
 
     def prompt_parameters(self):
-        items = [self.summaries]
+        items = [self.summaries, self.summary_projs]
         for blk in self.resblocks:
             items.extend(blk.prompt_parameters())
         return items
@@ -406,7 +417,7 @@ class VTransformer(nn.Module):
             items.extend(blk.prompt_dropout_modules())
         return items
 
-    def video_aggregate(self, embeds, num_tokens):
+    def video_aggregate(self, embeds, proj, num_tokens):
         num_summaries = self.summaries.shape[0]
         summary_embeds = embeds[num_tokens:num_tokens + num_summaries]
         summary_embeds = summary_embeds.unflatten(
@@ -417,6 +428,7 @@ class VTransformer(nn.Module):
             )
         )
         summary_embeds = summary_embeds.mean(dim=2)
+        summary_embeds = proj(summary_embeds)
         summary_embeds = summary_embeds.repeat_interleave(
             self.frame_num,
             dim=1
@@ -437,12 +449,20 @@ class VTransformer(nn.Module):
         x = torch.cat(
             (
                 x,
-                self.summaries.repeat(1, x.shape[1], 1)
+                self.summaries.repeat(
+                    1,
+                    x.shape[1],
+                    1
+                )
             )
         )
 
-        for blk in self.resblocks:
-            x = self.video_aggregate(blk(x), num_tokens=num_tokens)
+        for blk, proj in zip(self.resblocks, self.summary_projs):
+            x = self.video_aggregate(
+                embeds=blk(x),
+                proj=proj,
+                num_tokens=num_tokens
+            )
 
         s = x[num_tokens:(num_tokens + num_summaries)]
 
@@ -515,8 +535,7 @@ class VisionTransformer(nn.Module):
 
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
-        self.positional_embedding = nn.Parameter(
-            scale * torch.randn((input_resolution // patch_size) ** 2 + 1, width))
+        self.positional_embedding = nn.Parameter(scale * torch.randn((input_resolution // patch_size) ** 2 + 1, width))
         self.ln_pre = LayerNorm(width)
 
         self.transformer = VTransformer(

@@ -1,6 +1,6 @@
 class_path: src.dataset.base.ODDeepFakeDataModule
 init_args:
-  batch_size: 18
+  batch_size: 32
   num_workers: 8
   clip_duration: 4
   num_frames: 10

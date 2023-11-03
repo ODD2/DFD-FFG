@@ -5,4 +5,4 @@ model:
     text_embed: false
     frame_num: 10
 trainer:
-  accumulate_grad_batches: 3
+  accumulate_grad_batches: 8
