@@ -360,16 +360,11 @@ class VResidualAttentionBlock(nn.Module):
     def make_syno_mlp(self, d_model):
         downscale = nn.Linear(
             d_model,
-            d_model // 8,
-            bias=False
-        )
-        upscale = nn.Linear(
-            d_model // 8,
             d_model,
             bias=False
         )
-
-        return [downscale, upscale]
+        return [downscale]
+    
 
     def tuneable_modules(self):
         return [self.syno_mlp]
