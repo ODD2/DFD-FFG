@@ -72,7 +72,7 @@ class CDF(DeepFakeDataset):
                 if name in self.video_table[df_type]:
                     clips = int(self.video_table[df_type][name]["duration"] // self.clip_duration)
                     if (clips > 0):
-                        clips = clips
+                        clips = min(clips, self.max_clips)
                         _videos.append((df_type.upper(), name, clips))
                 else:
                     logging.warning(
@@ -232,9 +232,9 @@ class CDF(DeepFakeDataset):
 
 class CDFDataModule(DeepFakeDataModule):
     def __init__(
-            self,
-            *args,
-            **kargs
+        self,
+        *args,
+        **kargs
     ):
         super().__init__(*args, **kargs)
 
@@ -250,14 +250,17 @@ class CDFDataModule(DeepFakeDataModule):
             num_frames=self.num_frames,
             clip_duration=self.clip_duration,
             transform=self.transform,
-            ratio=self.ratio
+            ratio=self.ratio,
+            split="test",
+            pack=self.pack
         )
 
-        if (type(self._val_dataset) == type(self._test_dataset) == type(None)):
-            self._val_dataset = self._test_dataset = data_cls(
-                split="test",
-                pack=self.pack
+        if (stage == "fit" or stage == "valid"):
+            self._val_dataset = data_cls(
+                max_clips=self.max_clips
             )
+        elif (stage == "test"):
+            self._test_dataset = data_cls()
 
 
 if __name__ == "__main__":

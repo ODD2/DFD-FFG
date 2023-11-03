@@ -101,7 +101,8 @@ class DeepFakeDataset(Dataset):
         split: str,
         transform: Optional[Callable],
         pack: bool,
-        ratio: float = 1.0
+        ratio: float = 1.0,
+        max_clips: int = 100
     ):
         self.data_dir = data_dir
         self.vid_ext = vid_ext
@@ -111,6 +112,7 @@ class DeepFakeDataset(Dataset):
         self.split = split
         self.pack = pack
         self.ratio = ratio
+        self.max_clips = max_clips
 
         # list of video infos
         self.video_list = []
@@ -192,7 +194,8 @@ class DeepFakeDataModule(pl.LightningDataModule):
         num_workers: int = None,
         clip_duration: int = None,
         pack: bool = False,
-        ratio: float = 1.0
+        ratio: float = 1.0,
+        max_clips: int = 100
     ):
         super().__init__()
         # generic parameters
@@ -208,6 +211,7 @@ class DeepFakeDataModule(pl.LightningDataModule):
         self.clip_duration = clip_duration
         self.pack = pack
         self.ratio = ratio
+        self.max_clips = max_clips
 
         # dataset splits
         self._train_dataset = None

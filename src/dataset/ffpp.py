@@ -75,7 +75,6 @@ class FFPP(DeepFakeDataset):
         augmentations: FFPPAugmentation,
         *args,
         force_random_speed: Optional[bool] = None,
-        max_clips=100,
         **kargs
     ):
         super().__init__(*args, **kargs)
@@ -95,7 +94,6 @@ class FFPP(DeepFakeDataset):
                 False
             )
         )
-        self.max_clips = max_clips
 
         # record missing videos in the csv file for further usage.
         self.stray_videos = {}
@@ -565,7 +563,7 @@ class FFPP(DeepFakeDataset):
         # - video path
         vid_path = video_meta["path"]
         # - create video reader
-        vid_reader = VideoReader(vid_path, "video",num_threads=1)
+        vid_reader = VideoReader(vid_path, "video", num_threads=1)
         # - frames per second
         video_sample_freq = vid_reader.get_metadata()["video"]["fps"][0]
 
@@ -835,8 +833,6 @@ class FFPP2(FFPP):
             return entity_data
 
 
-
-
 class FFPPDataModule(DeepFakeDataModule):
     def __init__(
         self,
@@ -845,7 +841,6 @@ class FFPPDataModule(DeepFakeDataModule):
         strategy: FFPPSampleStrategy = FFPPSampleStrategy.NORMAL,
         augmentations: List[FFPPAugmentation] = [FFPPAugmentation.NONE],
         force_random_speed: bool = None,
-        max_clips: int = 100,
         *args,
         **kargs
     ):
@@ -861,7 +856,6 @@ class FFPPDataModule(DeepFakeDataModule):
         self.strategy = strategy
         self.augmentations = FFPPAugmentation(sum(augmentations))
         self.force_random_speed = force_random_speed
-        self.max_clips = max_clips
 
     def affine_model(self, model):
         super().affine_model(model)

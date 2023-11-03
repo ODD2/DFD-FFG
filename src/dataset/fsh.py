@@ -38,7 +38,6 @@ class FSh(DeepFakeDataset):
     def __init__(
         self,
         compressions: List[str],
-        max_clips: int = 100,
         *args,
         **kargs
     ):
@@ -47,7 +46,6 @@ class FSh(DeepFakeDataset):
         # configurations
         self.df_types = list(FSh.TYPE_DIRS.keys())
         self.compressions = compressions
-        self.max_clips = max_clips
 
         # record missing videos in the csv file for further usage.
         self.stray_videos = {}
@@ -262,7 +260,6 @@ class FShDataModule(DeepFakeDataModule):
     def __init__(
         self,
         compressions: List[str] = [],
-        max_clips: int = 100,
         *args, **kargs
 
     ):
@@ -271,7 +268,6 @@ class FShDataModule(DeepFakeDataModule):
             set([i for i in compressions if i in FSh.COMPRESSIONS]),
             reverse=True
         )
-        self.max_clips = max_clips
 
     def prepare_data(self):
         FSh.prepare_data(self.data_dir, self.compressions, self.vid_ext)
@@ -287,14 +283,17 @@ class FShDataModule(DeepFakeDataModule):
             clip_duration=self.clip_duration,
             transform=self.transform,
             ratio=self.ratio,
-            max_clips=self.max_clips
+            max_clips=self.max_clips,
+            split="test",
+            pack=self.pack
         )
 
-        if (type(self._val_dataset) == type(self._test_dataset) == type(None)):
-            self._val_dataset = self._test_dataset = data_cls(
-                split="test",
-                pack=self.pack
+        if (stage == "fit" or stage == "valid"):
+            self._val_dataset = data_cls(
+                max_clips=self.max_clips
             )
+        elif (stage == "test"):
+            self._test_dataset = data_cls()
 
 
 if __name__ == "__main__":

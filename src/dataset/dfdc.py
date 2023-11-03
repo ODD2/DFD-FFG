@@ -68,7 +68,7 @@ class DFDC(DeepFakeDataset):
             if name in self.video_table:
                 clips = int(self.video_table[name]["duration"] // self.clip_duration)
                 if (clips > 0):
-                    clips = clips
+                    clips = min(clips, self.max_clips)
                     label_videos[label].append((label, name, clips))
             else:
                 logging.warning(
@@ -247,14 +247,17 @@ class DFDCDataModule(DeepFakeDataModule):
             num_frames=self.num_frames,
             clip_duration=self.clip_duration,
             transform=self.transform,
-            ratio=self.ratio
+            ratio=self.ratio,
+            split="test",
+            pack=self.pack
         )
 
-        if (type(self._val_dataset) == type(self._test_dataset) == type(None)):
-            self._val_dataset = self._test_dataset = data_cls(
-                split="test",
-                pack=self.pack
+        if (stage == "fit" or stage == "valid"):
+            self._val_dataset = data_cls(
+                max_clips=self.max_clips
             )
+        elif (stage == "test"):
+            self._test_dataset = data_cls()
 
 
 if __name__ == "__main__":
