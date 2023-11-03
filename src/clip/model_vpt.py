@@ -358,12 +358,13 @@ class VResidualAttentionBlock(nn.Module):
         self.attr = {}
 
     def make_syno_mlp(self, d_model):
-        downscale = nn.Linear(
+        linear = nn.Linear(
             d_model,
             d_model,
             bias=False
         )
-        return [downscale]
+        linear.weight.data = torch.eye(d_model)
+        return [linear]
     
 
     def tuneable_modules(self):

@@ -341,10 +341,7 @@ class ODDataModule(pl.LightningDataModule):
         dataloaders = {
             dtm._val_dataset.cls_name:
             dtm.val_dataloader()
-            for dtm in [
-                *self._train_datamodules,
-                *self._val_datamodules
-            ]
+            for dtm in self._val_datamodules
         }
         return dataloaders
 
