@@ -4,10 +4,11 @@ import pickle
 import torch.nn as nn
 
 from typing import List
-from src.clip.model_vpt import PromptMode, LayerNorm
+
+from src.clip import clip as CLIP
+from src.clip.model_vpt import LayerNorm
 from src.model.base import ODBinaryMetricClassifier
 from src.model.clip import FrameAttrExtractor
-from src.clip import clip as CLIP
 
 
 class BinaryLinearClassifier(nn.Module):

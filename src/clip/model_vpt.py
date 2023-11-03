@@ -11,14 +11,6 @@ from collections import OrderedDict
 from typing import Tuple, Union
 
 
-class PromptMode(IntEnum):
-    NONE = auto()
-    DEEP = auto()
-    SHALLOW = auto()
-    DEEPC = auto()
-    EXPRES = auto()
-
-
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -187,290 +179,6 @@ class QuickGELU(nn.Module):
         return x * torch.sigmoid(1.702 * x)
 
 
-class MultiheadAttentionAttrExtract(nn.Module):
-    '''
-    Simple reimplementation of nn.MultiheadAttention with key, value return
-    '''
-
-    def __init__(
-        self,
-        embed_dim,
-        n_head,
-        attn_record=False
-    ):
-        super().__init__()
-
-        self.in_proj_weight = nn.Parameter(torch.empty((3 * embed_dim, embed_dim)))
-        self.in_proj_bias = nn.Parameter(torch.empty(3 * embed_dim))
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
-
-        self.n_head = n_head
-
-        # recordings
-        self.attn_record = attn_record
-        self.aff = None
-
-    def forward(self, x, attn_mask=None):
-        x = x.transpose(0, 1)
-        q, k, v = F.linear(
-            x,
-            self.in_proj_weight,
-            self.in_proj_bias
-        ).chunk(3, dim=-1)
-
-        view_as = (*q.shape[:2], self.n_head, -1)
-        q = q.view(*view_as)
-        k = k.view(*view_as)
-        v = v.view(*view_as)
-
-        aff = torch.einsum('nqhc,nkhc->nqkh', q / (q.size(-1) ** 0.5), k)
-
-        if (not type(attn_mask) == type(None)):
-            aff += attn_mask.unsqueeze(-1)
-
-        aff = aff.softmax(dim=-2)
-        mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
-
-        out = self.out_proj(mix.flatten(-2))
-
-        if self.attn_record:
-            self.aff = aff
-
-        q = q.transpose(0, 1)
-        k = k.transpose(0, 1)
-        v = v.transpose(0, 1)
-        out = out.transpose(0, 1)
-
-        return dict(
-            q=q,
-            k=k,
-            v=v,
-            out=out
-        )
-
-
-class VResidualAttentionBlock(nn.Module):
-    def __init__(
-        self,
-        d_model: int,
-        n_head: int,
-        block_index: int,
-        attn_mask: torch.Tensor = None,
-        attn_record: bool = False,
-        ignore_attr: bool = False,
-    ):
-        super().__init__()
-        # modified
-        self.attn = MultiheadAttentionAttrExtract(
-            d_model,
-            n_head,
-            attn_record=attn_record
-        )
-
-        self.block_index = block_index
-        self.ignore_attr = ignore_attr
-
-        self.ln_1 = LayerNorm(d_model)
-        self.mlp = nn.Sequential(OrderedDict([
-            ("c_fc", nn.Linear(d_model, d_model * 4)),
-            ("gelu", QuickGELU()),
-            ("c_proj", nn.Linear(d_model * 4, d_model))
-        ]))
-        self.ln_2 = LayerNorm(d_model)
-        self.attn_mask = attn_mask
-
-        # preserve attrs
-        self.attr = {}
-
-    def prompt_parameters(self):
-        return []
-
-    def prompt_dropout_modules(self):
-        return []
-
-    def pop_attr(self):
-        ret = self.get_attr()
-        self.attr.clear()
-        return ret
-
-    def get_attr(self):
-        return {k: self.attr[k] for k in self.attr}
-
-    def set_attr(self, q, k, v, out, emb):
-        if not self.ignore_attr:
-
-            q = q.transpose(0, 1)
-            k = k.transpose(0, 1)
-            v = v.transpose(0, 1)
-            out = out.transpose(0, 1)
-            emb = emb.transpose(0, 1)
-
-            num_tokens = q.shape[1]
-
-            self.attr = dict(
-                q=q[:, :num_tokens],
-                k=k[:, :num_tokens],
-                v=v[:, :num_tokens],
-                out=out[:, :num_tokens],
-                emb=emb[:, :num_tokens]
-            )
-
-    def attention(self, x: torch.Tensor):
-        # modified
-        self.attn_mask = (
-            self.attn_mask.to(dtype=x.dtype, device=x.device)
-            if self.attn_mask is not None else
-            None
-        )
-        return self.attn(x, self.attn_mask)
-
-    def forward(self, x: torch.Tensor):
-        self.pop_attr()
-        data = self.attention(self.ln_1(x))
-        x = x + data["out"]
-        x = x + self.mlp(self.ln_2(x))
-
-        self.set_attr(
-            **data,
-            emb=x
-        )
-
-        return x
-
-
-class VTransformer(nn.Module):
-    def __init__(
-        self,
-        width: int,
-        layers: int,
-        heads: int,
-        patch_num: int,
-        attn_record: bool = False,
-        ignore_attr: bool = False,
-        frame_num: int = 1,
-        summa_num: int = 1
-    ):
-        super().__init__()
-        self.width = width
-        self.heads = heads
-        self.layers = layers
-
-        self.frame_num = frame_num
-        self.patch_num = patch_num
-        self.summa_num = summa_num
-        self.summaries = nn.Parameter(
-            (width**-0.5) * torch.randn(summa_num, 1, width)
-        )
-        self.summary_projs = nn.ModuleList([
-            nn.Linear(
-                width,
-                width,
-                bias=False
-            )
-            for _ in range(self.layers)]
-        )
-
-        for proj in self.summary_projs:
-            proj.weight.data = torch.eye(width)
-
-        # determine the number of tokens throught the transformer
-        tot_tokens = (
-            1 +  # cls
-            self.patch_num +  # patch
-            summa_num  # summary
-        )
-
-        # create attention mask
-        self.attn_mask = torch.zeros(
-            *([tot_tokens] * 2)
-        )
-        # mask references to the patch embeddings & cls
-        s_int = [
-            1 + self.patch_num,
-            1 + self.patch_num + summa_num
-        ]
-        self.attn_mask[:s_int[0], s_int[0]:s_int[1]].fill_(float("-inf"))
-        # mask references from the cls
-        self.attn_mask[s_int[0]:s_int[1], 0].fill_(float("-inf"))
-
-        self.resblocks = nn.Sequential(*[
-            VResidualAttentionBlock(
-                d_model=width,
-                n_head=heads,
-                block_index=i,
-                attn_mask=self.attn_mask,
-                attn_record=attn_record,
-                ignore_attr=ignore_attr
-            )
-            for i in range(layers)
-        ])
-
-    def prompt_parameters(self):
-        items = [self.summaries, self.summary_projs]
-        for blk in self.resblocks:
-            items.extend(blk.prompt_parameters())
-        return items
-
-    def prompt_dropout_modules(self):
-        items = []
-        for blk in self.resblocks:
-            items.extend(blk.prompt_dropout_modules())
-        return items
-
-    def video_aggregate(self, embeds, proj, num_tokens):
-        num_summaries = self.summaries.shape[0]
-        summary_embeds = embeds[num_tokens:num_tokens + num_summaries]
-        summary_embeds = summary_embeds.unflatten(
-            1,
-            (
-                summary_embeds.shape[1] // self.frame_num,
-                self.frame_num
-            )
-        )
-        summary_embeds = summary_embeds.mean(dim=2)
-        summary_embeds = proj(summary_embeds)
-        summary_embeds = summary_embeds.repeat_interleave(
-            self.frame_num,
-            dim=1
-        )
-        return torch.cat(
-            (
-                embeds[:num_tokens,],
-                summary_embeds
-            ),
-            dim=0
-        )
-
-    def forward(self, x: torch.Tensor):
-        num_tokens = x.shape[0]
-        num_summaries = self.summaries.shape[0]
-
-        # video summaries
-        x = torch.cat(
-            (
-                x,
-                self.summaries.repeat(
-                    1,
-                    x.shape[1],
-                    1
-                )
-            )
-        )
-
-        for blk, proj in zip(self.resblocks, self.summary_projs):
-            x = self.video_aggregate(
-                embeds=blk(x),
-                proj=proj,
-                num_tokens=num_tokens
-            )
-
-        s = x[num_tokens:(num_tokens + num_summaries)]
-
-        x = x[:num_tokens]
-
-        return x, s[:, ::self.frame_num]
-
-
 ############# ORIGINAL #############
 # preserve for text modules
 class ResidualAttentionBlock(nn.Module):
@@ -511,6 +219,226 @@ class Transformer(nn.Module):
 ####################################
 
 
+class MultiheadAttentionAttrExtract(nn.Module):
+    '''
+    Simple reimplementation of nn.MultiheadAttention with key, value return
+    '''
+
+    def __init__(
+        self,
+        embed_dim,
+        n_head,
+        attn_record=False
+    ):
+        super().__init__()
+
+        self.in_proj_weight = nn.Parameter(torch.empty((3 * embed_dim, embed_dim)))
+        self.in_proj_bias = nn.Parameter(torch.empty(3 * embed_dim))
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
+
+        self.n_head = n_head
+
+        # recordings
+        self.attn_record = attn_record
+        self.aff = None
+        self.saff = None
+
+    def forward(self, x: torch.Tensor, s: torch.Tensor):
+        # x.shape = (batch, frames, grid**2 + 1, width)
+        # s.shape = (batch, frames, synos, width)
+        batch, frames = x.shape[:2]
+
+        # Original ViT Self-Attention
+        x = x.flatten(0, 1)  # shape = (batch*frames, grid**2 + 1, width)
+
+        q, k, v = F.linear(
+            x,
+            self.in_proj_weight,
+            self.in_proj_bias
+        ).chunk(3, dim=-1)
+
+        view_as = (*q.shape[:2], self.n_head, -1)
+
+        q = q.view(*view_as)
+        k = k.view(*view_as)
+        v = v.view(*view_as)
+
+        aff = torch.einsum('nqhc,nkhc->nqkh', q / (q.size(-1) ** 0.5), k)
+
+        aff = aff.softmax(dim=-2)
+        mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
+
+        out = self.out_proj(mix.flatten(-2))
+
+        # Additional Synoptic Cross-Attention
+        s_q, s_k, s_v = F.linear(
+            s,
+            self.in_proj_weight,
+            self.in_proj_bias
+        ).chunk(3, dim=-1)
+
+        view_as = (*s_q.shape[:2], self.n_head, -1)
+
+        s_q = s_q.view(*view_as)
+        s_k = s_k.view(*view_as)
+        s_v = s_v.view(*view_as)
+        s_q = s_q.repeat_interleave(frames, dim=0)
+        s_k = s_q.repeat_interleave(frames, dim=0)
+        s_v = s_q.repeat_interleave(frames, dim=0)
+
+        s_aff = torch.einsum('nqhc,nkhc->nqkh', s_q / (s_q.size(-1) ** 0.5), k[:, 1:])  # ignore cls embedding
+
+        s_aff = s_aff.softmax(dim=-2)
+        s_mix = torch.einsum('nqlh,nlhc->nqhc', s_aff, v[:, 1:])  # ignore cls embedding
+
+        s_mix = s_mix.unflatten(0, (batch, frames)).mean(dim=1)
+
+        s_out = self.out_proj(s_mix.flatten(-2))
+
+        # Restore Dimensions
+        q = q.unflatten(0, (batch, frames))
+        k = k.unflatten(0, (batch, frames))
+        v = v.unflatten(0, (batch, frames))
+        out = out.unflatten(0, (batch, frames))
+        aff = aff.unflatten(0, (batch, frames))
+        s_aff = s_aff.unflatten(0, (batch, frames))
+
+        # record attentions
+        if self.attn_record:
+            self.aff = aff
+
+        if self.attn_record:
+            self.s_aff = s_aff
+
+        return dict(
+            q=q,
+            k=k,
+            v=v,
+            out=out,
+            s_q=s_q,
+            s_k=s_k,
+            s_v=s_v,
+            s_out=s_out
+        )
+
+
+class VResidualAttentionBlock(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        n_head: int,
+        block_index: int,
+        attn_record: bool = False,
+        ignore_attr: bool = False,
+    ):
+        super().__init__()
+        # modified
+        self.attn = MultiheadAttentionAttrExtract(
+            d_model,
+            n_head,
+            attn_record=attn_record
+        )
+
+        self.block_index = block_index
+        self.ignore_attr = ignore_attr
+
+        self.ln_1 = LayerNorm(d_model)
+        self.mlp = nn.Sequential(OrderedDict([
+            ("c_fc", nn.Linear(d_model, d_model * 4)),
+            ("gelu", QuickGELU()),
+            ("c_proj", nn.Linear(d_model * 4, d_model))
+        ]))
+        self.ln_2 = LayerNorm(d_model)
+
+        self.syno_mlp = nn.Sequential(
+            *self.make_syno_mlp(d_model=d_model)
+        )
+
+        # preserve attrs
+        self.attr = {}
+
+    def make_syno_mlp(self, d_model):
+        linear = nn.Linear(
+            d_model,
+            d_model,
+            bias=False
+        )
+        linear.weight.data = torch.eye(d_model)
+        return [linear]
+
+    def tuneable_modules(self):
+        return [self.syno_mlp]
+
+    def pop_attr(self):
+        ret = self.get_attr()
+        self.attr.clear()
+        return ret
+
+    def get_attr(self):
+        return {k: self.attr[k] for k in self.attr}
+
+    def set_attr(self, **attr):
+        if not self.ignore_attr:
+            self.attr = attr
+
+    def attention(self, x: torch.Tensor, s: torch.Tensor):
+        return self.attn(x, s)
+
+    def forward(self, x: torch.Tensor, s: torch.Tensor):
+        self.pop_attr()
+        data = self.attention(self.ln_1(x), self.ln_1(self.syno_mlp(s)))
+        x = x + data["out"]
+        x = x + self.mlp(self.ln_2(x))
+        s = s + data["s_out"]
+        s = s + self.mlp(self.ln_2(s))
+
+        self.set_attr(
+            **data,
+            emb=x,
+            s_emb=s
+        )
+
+        return x, s
+
+
+class VTransformer(nn.Module):
+    def __init__(
+        self,
+        width: int,
+        layers: int,
+        heads: int,
+        attn_record: bool = False,
+        ignore_attr: bool = False
+    ):
+        super().__init__()
+        self.width = width
+        self.heads = heads
+        self.layers = layers
+
+        self.resblocks = nn.Sequential(*[
+            VResidualAttentionBlock(
+                d_model=width,
+                n_head=heads,
+                block_index=i,
+                attn_record=attn_record,
+                ignore_attr=ignore_attr
+            )
+            for i in range(layers)
+        ])
+
+    def tuneable_modules(self):
+        items = []
+        for blk in self.resblocks:
+            items.extend(blk.tuneable_modules())
+        return items
+
+    def forward(self, x: torch.Tensor, s: torch.Tensor):
+        for blk in self.resblocks:
+            x, s = blk(x, s)
+
+        return x, s
+
+
 class VisionTransformer(nn.Module):
     def __init__(
         self,
@@ -520,7 +448,6 @@ class VisionTransformer(nn.Module):
         layers: int,
         heads: int,
         output_dim: int,
-        frame_num: int = 1,
         attn_record: bool = False,
         ignore_attr: bool = False
     ):
@@ -543,9 +470,6 @@ class VisionTransformer(nn.Module):
             width,
             layers,
             heads,
-            # frame & video
-            frame_num=frame_num,
-            patch_num=self.patch_num,
             # generic
             attn_record=attn_record,
             ignore_attr=ignore_attr
@@ -554,15 +478,22 @@ class VisionTransformer(nn.Module):
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
+        # synoptic ability
+        self.syno_embedding = nn.Parameter(scale * torch.randn(1, width))
+
     def forward(self, x: torch.Tensor, summary: bool = False):
-        x = self.conv1(x)  # shape = [*, width, grid, grid]
-        x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
-        x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
+        batch, frames = x.shape[:2]
+        # x.shape = [batch,  frames, 3, px, px]
+        x = self.conv1(x.flatten(0, 1)).unflatten(0, (batch, frames))
+        # x.shape = [batch, frames, width, grid, grid]
+        x = x.flatten(-2).transpose(-1, -2)
+        # x.shape = [batch, frames, grid ** 2, width]
         x = torch.cat(
             [
                 self.class_embedding.to(x.dtype) +
                 torch.zeros(
                     x.shape[0],
+                    x.shape[1],
                     1,
                     x.shape[-1],
                     dtype=x.dtype,
@@ -570,17 +501,22 @@ class VisionTransformer(nn.Module):
                 ),
                 x
             ],
-            dim=1
-        )  # shape = [*, grid ** 2 + 1, width]
+            dim=-2
+        )  # shape = [batch, frames, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
         x = self.ln_pre(x)
 
-        x = x.permute(1, 0, 2)  # NLD -> LND
-        x, s = self.transformer(x)
-        x = x.permute(1, 0, 2)  # LND -> NLD
-        s = s.permute(1, 0, 2)
+        s = (
+            self.syno_embedding
+            .to(x.dtype)
+            .unsqueeze(0)
+            .repeat(x.shape[0], 1, 1)
+        )  # shape = [batch, synos, width]
+        s = self.ln_pre(s)
 
-        x = self.ln_post(x[:, 0, :])
+        x, s = self.transformer(x, s)
+
+        x = self.ln_post(x[..., 0, :])
         s = self.ln_post(s).mean(1)
 
         if self.proj is not None:
@@ -592,11 +528,10 @@ class VisionTransformer(nn.Module):
         else:
             return x
 
-    def prompt_parameters(self):
-        return self.transformer.prompt_parameters()
-
-    def prompt_dropout_modules(self):
-        return self.transformer.prompt_dropout_modules()
+    def tuneable_modules(self):
+        return self.transformer.tuneable_modules().extend([
+            self.syno_embedding
+        ])
 
 
 class CLIP(nn.Module):
@@ -705,7 +640,7 @@ class CLIP(nn.Module):
     def dtype(self):
         return self.visual.conv1.weight.dtype
 
-    def encode_image(self, image):
+    def encode_frames(self, image):
         return self.visual(image.type(self.dtype))
 
     def encode_text(self, text):
@@ -726,17 +661,17 @@ class CLIP(nn.Module):
         return x
 
     def forward(self, image, text):
-        image_features = self.encode_image(image)
+        image_features = self.encode_frames(image)
         text_features = self.encode_text(text)
 
         # normalized features
-        image_features = image_features / image_features.norm(dim=1, keepdim=True)
-        text_features = text_features / text_features.norm(dim=1, keepdim=True)
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
 
         # cosine similarity as logits
         logit_scale = self.logit_scale.exp()
-        logits_per_image = logit_scale * image_features @ text_features.t()
-        logits_per_text = logits_per_image.t()
+        logits_per_image = logit_scale * image_features @ text_features.transpose(-1, -2)
+        logits_per_text = logits_per_image.transpose(-1, -2)
 
         # shape = [global_batch_size, global_batch_size]
         return logits_per_image, logits_per_text

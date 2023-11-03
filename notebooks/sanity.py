@@ -4,14 +4,14 @@ from src.clip import clip as CLIP
 from PIL import Image
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-model, preprocess = CLIP.load("ViT-L/14", device=device)
+model, preprocess = CLIP.load("ViT-B/16", device=device)
 model = model.float()
 image = Image.open("notebooks/woman.png")
-image = preprocess(image).unsqueeze(0).to(device)
+image = preprocess(image).unsqueeze(0).unsqueeze(0).to(device)
 text = CLIP.tokenize(["a man", "a woman"]).to(device)
 
 with torch.no_grad():
-    image_features = model.encode_image(image)
+    image_features = model.encode_frames(image)
     text_features = model.encode_text(text)
 
     logits_per_image, logits_per_text = model(image, text)

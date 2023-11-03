@@ -8,7 +8,7 @@
             "name": "Python: Arbitrary",
             "type": "python",
             "request": "launch",
-            "module": "notebooks.text_prompt.gender_alignment",
+            "module": "notebooks.sanity",
             "justMyCode": true
         },
         {

@@ -47,8 +47,8 @@ class FrameAttrExtractor(nn.Module):
         self.model.requires_grad_(False)
 
         if not frozen:
-            for param in self.model.prompt_parameters():
-                param.requires_grad_(True)
+            for module in self.model.tuneable_modules():
+                module.requires_grad_(True)
 
     @property
     def n_px(self):
@@ -91,19 +91,15 @@ class FrameAttrExtractor(nn.Module):
         super().train(mode)
         if (mode):
             self.model.eval()
-            for m in self.model.prompt_dropout_modules():
-                m.train()
+            for module in self.model.tuneable_modules():
+                if (issubclass(type(module), torch.nn.Module)):
+                    module.train()
         return self
 
 
 if __name__ == "__main__":
-    from src.clip.model_vpt import PromptMode
     FrameAttrExtractor(
         "ViT-B/16",
-        prompt_mode=PromptMode.DEEP,
-        prompt_num=10,
-        prompt_layers=12,
-        prompt_dropout=0.2,
         text_embed=False,
         pretrain="logs/DFD-FFG/71hfy89x/checkpoints/epoch=38-step=8307_encoder.pth"
     )
