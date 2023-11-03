@@ -30,19 +30,19 @@
                 "configs/generic/base.yaml",
                 "--trainer.precision=16",
                 // ######### LMVL #########
-                // "--config",
-                // "configs/generic/model/clip/ftfe/tmvl.yaml",
+                "--config",
+                "configs/version/1031/clip/L14/ftfe/lmvl.yaml",
                 // "--config",
                 // "configs/generic/model/clip/ftfe/amg.yaml",
                 // "--model.init_args.architecture=ViT-B/14",
                 // "--model.init_args.prompt_num=100",
                 // ######### SNVL #########
-                "--config",
-                "configs/generic/model/clip/L14/snvl.yaml",
-                "--config",
-                "configs/generic/model/clip/L14/ffg.yaml",
-                "--config",
-                "configs/generic/model/clip/L14/vpt.yaml",
+                // "--config",
+                // "configs/generic/model/clip/L14/snvl.yaml",
+                // "--config",
+                // "configs/generic/model/clip/L14/ffg.yaml",
+                // "--config",
+                // "configs/generic/model/clip/L14/vpt.yaml",
                 // #########################
                 "--config",
                 "configs/generic/test.yaml",
@@ -57,9 +57,10 @@
             "justMyCode": false,
             "args": [
                 // "--config",
-                "logs/DFD-FFG/o4w99t7e/setting.yaml",
+                "logs/DFD-FFG(v100)/24ugmkpg/setting.yaml",
                 "configs/generic/inference.yaml",
-                "logs/DFD-FFG/o4w99t7e/checkpoints/epoch=5-step=3735.ckpt"
+                // "logs/DFD-FFG(v100)/24ugmkpg/checkpoints/epoch=7-step=1341.ckpt",
+                "logs/DFD-FFG(v100)/24ugmkpg/checkpoints/last.ckpt"
             ]
         },
         {
@@ -95,6 +96,13 @@
             "type": "python",
             "request": "launch",
             "module": "src.model.clip.snvl",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: CLIPNSVL",
+            "type": "python",
+            "request": "launch",
+            "module": "src.model.clip.nsvl",
             "justMyCode": false
         },
     ]
