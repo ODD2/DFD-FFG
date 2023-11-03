@@ -79,6 +79,9 @@ class ODBinaryMetricClassifier(ODClassifier):
         return self.dts_metrics[dts_name][metric_name]
 
     def reset_metrics(self):
+        for dts_name, metrics in self.dts_metrics.items():
+            for metric_name, metric_obj in metrics.items():
+                metric_obj.reset()
         self.dts_metrics.clear()
 
     # shared procedures

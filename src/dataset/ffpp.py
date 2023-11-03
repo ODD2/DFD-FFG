@@ -565,7 +565,7 @@ class FFPP(DeepFakeDataset):
         # - video path
         vid_path = video_meta["path"]
         # - create video reader
-        vid_reader = VideoReader(vid_path, "video")
+        vid_reader = VideoReader(vid_path, "video",num_threads=1)
         # - frames per second
         video_sample_freq = vid_reader.get_metadata()["video"]["fps"][0]
 
