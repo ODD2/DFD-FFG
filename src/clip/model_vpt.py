@@ -19,12 +19,6 @@ class PromptMode(IntEnum):
     EXPRES = auto()
 
 
-class PromptMask(IntFlag):
-    NONE = 0
-    CLS_MASK = auto()
-    PROMPT_MASK = auto()
-
-
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -53,7 +47,8 @@ class Bottleneck(nn.Module):
             # downsampling layer is prepended with an avgpool, and the subsequent convolution has stride 1
             self.downsample = nn.Sequential(OrderedDict([
                 ("-1", nn.AvgPool2d(stride)),
-                ("0", nn.Conv2d(inplanes, planes * self.expansion, 1, stride=1, bias=False)),
+                ("0", nn.Conv2d(inplanes, planes *
+                 self.expansion, 1, stride=1, bias=False)),
                 ("1", nn.BatchNorm2d(planes * self.expansion))
             ]))
 
@@ -76,7 +71,8 @@ class Bottleneck(nn.Module):
 class AttentionPool2d(nn.Module):
     def __init__(self, spacial_dim: int, embed_dim: int, num_heads: int, output_dim: int = None):
         super().__init__()
-        self.positional_embedding = nn.Parameter(torch.randn(spacial_dim ** 2 + 1, embed_dim) / embed_dim ** 0.5)
+        self.positional_embedding = nn.Parameter(torch.randn(
+            spacial_dim ** 2 + 1, embed_dim) / embed_dim ** 0.5)
         self.k_proj = nn.Linear(embed_dim, embed_dim)
         self.q_proj = nn.Linear(embed_dim, embed_dim)
         self.v_proj = nn.Linear(embed_dim, embed_dim)
@@ -95,7 +91,8 @@ class AttentionPool2d(nn.Module):
             k_proj_weight=self.k_proj.weight,
             v_proj_weight=self.v_proj.weight,
             in_proj_weight=None,
-            in_proj_bias=torch.cat([self.q_proj.bias, self.k_proj.bias, self.v_proj.bias]),
+            in_proj_bias=torch.cat(
+                [self.q_proj.bias, self.k_proj.bias, self.v_proj.bias]),
             bias_k=None,
             bias_v=None,
             add_zero_attn=False,
@@ -123,13 +120,16 @@ class ModifiedResNet(nn.Module):
         self.input_resolution = input_resolution
 
         # the 3-layer stem
-        self.conv1 = nn.Conv2d(3, width // 2, kernel_size=3, stride=2, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(3, width // 2, kernel_size=3,
+                               stride=2, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(width // 2)
         self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(width // 2, width // 2, kernel_size=3, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(width // 2, width // 2,
+                               kernel_size=3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(width // 2)
         self.relu2 = nn.ReLU(inplace=True)
-        self.conv3 = nn.Conv2d(width // 2, width, kernel_size=3, padding=1, bias=False)
+        self.conv3 = nn.Conv2d(
+            width // 2, width, kernel_size=3, padding=1, bias=False)
         self.bn3 = nn.BatchNorm2d(width)
         self.relu3 = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(2)
@@ -142,7 +142,8 @@ class ModifiedResNet(nn.Module):
         self.layer4 = self._make_layer(width * 8, layers[3], stride=2)
 
         embed_dim = width * 32  # the ResNet feature dimension
-        self.attnpool = AttentionPool2d(input_resolution // 32, embed_dim, heads, output_dim)
+        self.attnpool = AttentionPool2d(
+            input_resolution // 32, embed_dim, heads, output_dim)
 
     def _make_layer(self, planes, blocks, stride=1):
         layers = [Bottleneck(self._inplanes, planes, stride)]
@@ -195,22 +196,16 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self,
         embed_dim,
         n_head,
-        prompt_num: int = 0,
-        prompt_mode: PromptMode = PromptMode.NONE,
-        prompt_mask: PromptMask = PromptMask.NONE,
         attn_record=False
     ):
         super().__init__()
 
-        self.in_proj_weight = nn.Parameter(torch.empty((3 * embed_dim, embed_dim)))
+        self.in_proj_weight = nn.Parameter(
+            torch.empty((3 * embed_dim, embed_dim)))
         self.in_proj_bias = nn.Parameter(torch.empty(3 * embed_dim))
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
         self.n_head = n_head
-
-        self.prompt_num = prompt_num
-        self.prompt_mode = prompt_mode
-        self.prompt_mask = prompt_mask
 
         # recordings
         self.attn_record = attn_record
@@ -218,7 +213,8 @@ class MultiheadAttentionAttrExtract(nn.Module):
 
     def forward(self, x, attn_mask=None):
         x = x.transpose(0, 1)
-        q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
+        q, k, v = F.linear(x, self.in_proj_weight,
+                           self.in_proj_bias).chunk(3, dim=-1)
 
         view_as = (*q.shape[:2], self.n_head, -1)
         q = q.view(*view_as)
@@ -229,16 +225,6 @@ class MultiheadAttentionAttrExtract(nn.Module):
 
         if (not type(attn_mask) == type(None)):
             aff += attn_mask.unsqueeze(-1)
-
-        # affinity masking for prompts
-        if (self.prompt_num > 0):
-            tokens = q.shape[1] - self.prompt_num
-            m = torch.zeros(aff.shape[1:], dtype=bool, device=aff.device)
-            if (PromptMask.CLS_MASK in self.prompt_mask):
-                m[0, tokens:] = True  # avoid direct interaction between cls and prompt
-            if (PromptMask.PROMPT_MASK in self.prompt_mask):
-                m[tokens:, tokens:] = True  # mask inter-relation between prompts
-            aff = aff.masked_fill(m, -1e4)
 
         aff = aff.softmax(dim=-2)
         mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
@@ -261,7 +247,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
         )
 
 
-class ResidualAttentionBlock(nn.Module):
+class VResidualAttentionBlock(nn.Module):
     def __init__(
         self,
         d_model: int,
@@ -279,8 +265,6 @@ class ResidualAttentionBlock(nn.Module):
         self.attn = MultiheadAttentionAttrExtract(
             d_model,
             n_head,
-            prompt_num=prompt_num,
-            prompt_mode=prompt_mode,
             attn_record=attn_record
         )
 
@@ -308,8 +292,10 @@ class ResidualAttentionBlock(nn.Module):
         ):
             self.prompts = None
             self.prompt_drop = None
+
         else:
-            self.prompts = nn.Parameter((d_model**-0.5) * torch.randn(prompt_num, 1, d_model))
+            self.prompts = nn.Parameter(
+                (d_model**-0.5) * torch.randn(prompt_num, 1, d_model))
             self.prompt_drop = nn.Dropout(prompt_dropout)
 
     def prompt_parameters(self):
@@ -336,37 +322,41 @@ class ResidualAttentionBlock(nn.Module):
             emb = emb.transpose(0, 1)
 
             if (self.prompt_mode == PromptMode.NONE):
-                tokens = q.shape[1]
+                num_tokens = q.shape[1]
             else:
-                tokens = q.shape[1] - self.prompt_num
+                num_tokens = q.shape[1] - self.prompt_num
 
             self.attr = dict(
-                q=q[:, :tokens],
-                k=k[:, :tokens],
-                v=v[:, :tokens],
-                out=out[:, :tokens],
-                emb=emb[:, :tokens]
+                q=q[:, :num_tokens],
+                k=k[:, :num_tokens],
+                v=v[:, :num_tokens],
+                out=out[:, :num_tokens],
+                emb=emb[:, :num_tokens]
             )
 
     def attention(self, x: torch.Tensor):
         # modified
-        self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
+        self.attn_mask = (
+            self.attn_mask.to(dtype=x.dtype, device=x.device)
+            if self.attn_mask is not None else
+            None
+        )
         return self.attn(x, self.attn_mask)
 
     def forward(self, x: torch.Tensor):
         self.pop_attr()
-        tokens = x.shape[0] - self.prompt_num
+        num_tokens = x.shape[0] - self.prompt_num
         if (
             self.prompt_mode == PromptMode.NONE or
             self.prompt_mode == PromptMode.SHALLOW
         ):
             pass
         elif (self.prompt_mode == PromptMode.DEEP):
-            x[tokens:] = self.prompt_drop(
+            x[num_tokens:] = self.prompt_drop(
                 self.prompts.repeat(1, x.shape[1], 1)
             )
         elif (self.prompt_mode == PromptMode.DEEPC):
-            x[tokens:] += self.prompt_drop(
+            x[num_tokens:] += self.prompt_drop(
                 self.prompts.repeat(1, x.shape[1], 1)
             )
         elif (self.prompt_mode == PromptMode.EXPRES):
@@ -384,33 +374,80 @@ class ResidualAttentionBlock(nn.Module):
         return x
 
 
-class Transformer(nn.Module):
+class VTransformer(nn.Module):
     def __init__(
         self,
         width: int,
         layers: int,
         heads: int,
-        attn_mask: torch.Tensor = None,
+        patch_num: int,
         prompt_num: int = 0,
-        prompt_mode: PromptMode = PromptMode.NONE,
         prompt_layers: int = 0,
         prompt_dropout: float = 0,
+        prompt_mode: PromptMode = PromptMode.NONE,
         attn_record: bool = False,
-        ignore_attr: bool = False
+        ignore_attr: bool = False,
+        frame_num: int = 1,
+        summa_num: int = 1
     ):
         super().__init__()
         self.width = width
         self.heads = heads
         self.layers = layers
+
         self.prompt_mode = prompt_mode
         self.prompt_num = prompt_num
         self.prompt_layers = prompt_layers
+
+        self.frame_num = frame_num
+        self.patch_num = patch_num
+        self.summa_num = summa_num
+        self.summaries = nn.Parameter(
+            (width**-0.5) * torch.randn(summa_num, 1, width)
+        )
+
+        if (self.prompt_mode == PromptMode.SHALLOW):
+            self.prompts = nn.Parameter(
+                (width**-0.5) * torch.randn(prompt_num, 1, width)
+            )
+            self.prompt_drop = nn.Dropout(prompt_dropout)
+        else:
+            self.prompts = None
+            self.prompt_drop = None
+
+        # determine the number of tokens throught the transformer
+        tot_tokens = (
+            1 +  # cls
+            self.patch_num +  # patch
+            summa_num +   # summary
+            (   # prompt
+                0
+                if (type(self.prompts) == type(None)) else
+                self.prompt_num
+            )
+        )
+        if (not type(self.prompts) == type(None)):
+            tot_tokens += self.prompts.shape[0]  # prompts
+
+        # create attention mask
+        self.attn_mask = torch.zeros(
+            *([tot_tokens] * 2)
+        )
+        # mask references to the patch embeddings & cls
+        s_int = [
+            1 + self.patch_num,
+            1 + self.patch_num + self.summaries.shape[0]
+        ]
+        self.attn_mask[:, s_int[0]:s_int[1]].fill_(float("-inf"))
+        # mask references from the cls
+        self.attn_mask[s_int[0]:s_int[1], 0].fill_(float("-inf"))
+
         self.resblocks = nn.Sequential(*[
-            ResidualAttentionBlock(
+            VResidualAttentionBlock(
                 d_model=width,
                 n_head=heads,
                 block_index=i,
-                attn_mask=attn_mask,
+                attn_mask=self.attn_mask,
                 attn_record=attn_record,
                 ignore_attr=ignore_attr,
                 ** dict(
@@ -430,27 +467,58 @@ class Transformer(nn.Module):
             for i in range(layers)
         ])
 
-        if (self.prompt_mode == PromptMode.SHALLOW):
-            self.prompts = nn.Parameter((width**-0.5) * torch.randn(prompt_num, 1, width))
-            self.prompt_drop = nn.Dropout(prompt_dropout)
-        else:
-            self.prompts = None
-            self.prompt_drop = None
-
     def prompt_parameters(self):
-        items = [] if (type(self.prompts) == type(None)) else [self.prompts]
+        items = [self.summaries]
+
+        if (not type(self.prompts) == type(None)):
+            items.append(self.prompts)
+
         for blk in self.resblocks:
             items.extend(blk.prompt_parameters())
         return items
 
     def prompt_dropout_modules(self):
-        items = [] if (type(self.prompt_drop) == type(None)) else [self.prompt_drop]
+        items = [] if (type(self.prompt_drop) == type(None)) else [
+            self.prompt_drop]
         for blk in self.resblocks:
             items.extend(blk.prompt_dropout_modules())
         return items
 
+    def video_aggregate(self, embeds, num_tokens):
+        num_summaries = self.summaries.shape[0]
+        summary_embeds = embeds[num_tokens:num_tokens + num_summaries]
+        summary_embeds = summary_embeds.unflatten(
+            1,
+            (
+                summary_embeds.shape[1] // self.frame_num,
+                self.frame_num
+            )
+        )
+        summary_embeds = summary_embeds.mean(dim=2)
+        summary_embeds = summary_embeds.repeat_interleave(
+            self.frame_num, dim=1)
+        return torch.cat(
+            (
+                embeds[:num_tokens,],
+                summary_embeds,
+                embeds[num_tokens + num_summaries:,],
+            ),
+            dim=0
+        )
+
     def forward(self, x: torch.Tensor):
-        tokens = x.shape[0]
+        num_tokens = x.shape[0]
+        num_summaries = self.summaries.shape[0]
+
+        # video summaries
+        x = torch.cat(
+            (
+                x,
+                self.summaries.repeat(1, x.shape[1], 1)
+            )
+        )
+
+        # frame shared prompts
         if self.prompt_mode == PromptMode.NONE:
             pass
         elif self.prompt_mode == PromptMode.SHALLOW:
@@ -476,14 +544,65 @@ class Transformer(nn.Module):
             )
 
         for blk in self.resblocks[:self.prompt_layers]:
-            x = blk(x)
+            x = self.video_aggregate(blk(x), num_tokens=num_tokens)
 
-        x = x[:tokens]
+        x = x[:num_tokens + num_summaries]
 
         for blk in self.resblocks[self.prompt_layers:]:
-            x = blk(x)
+            x = self.video_aggregate(blk(x), num_tokens=num_tokens)
 
+        s = x[num_tokens:(num_tokens + num_summaries)]
+
+        assert s.shape[0] == num_summaries
+        assert not (
+            False in (
+                s[0, 0::self.frame_num] == s[0, 1::self.frame_num]
+            )
+        )
+
+        x = x[:num_tokens]
+
+        return x, s[:, ::self.frame_num]
+
+
+############# ORIGINAL #############
+# preserve for text modules
+class ResidualAttentionBlock(nn.Module):
+    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None):
+        super().__init__()
+
+        self.attn = nn.MultiheadAttention(d_model, n_head)
+        self.ln_1 = LayerNorm(d_model)
+        self.mlp = nn.Sequential(OrderedDict([
+            ("c_fc", nn.Linear(d_model, d_model * 4)),
+            ("gelu", QuickGELU()),
+            ("c_proj", nn.Linear(d_model * 4, d_model))
+        ]))
+        self.ln_2 = LayerNorm(d_model)
+        self.attn_mask = attn_mask
+
+    def attention(self, x: torch.Tensor):
+        self.attn_mask = self.attn_mask.to(
+            dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
+        return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
+
+    def forward(self, x: torch.Tensor):
+        x = x + self.attention(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
         return x
+
+
+class Transformer(nn.Module):
+    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None):
+        super().__init__()
+        self.width = width
+        self.layers = layers
+        self.resblocks = nn.Sequential(
+            *[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
+
+    def forward(self, x: torch.Tensor):
+        return self.resblocks(x)
+####################################
 
 
 class VisionTransformer(nn.Module):
@@ -495,6 +614,7 @@ class VisionTransformer(nn.Module):
         layers: int,
         heads: int,
         output_dim: int,
+        frame_num: int = 1,
         prompt_num: int = 0,
         prompt_mode: PromptMode = PromptMode.NONE,
         prompt_layers: int = 0,
@@ -505,25 +625,35 @@ class VisionTransformer(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.patch_size = patch_size
+        self.patch_num = (input_resolution // patch_size) ** 2
         self.output_dim = output_dim
 
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=width,
+                               kernel_size=patch_size, stride=patch_size, bias=False)
 
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
-        self.positional_embedding = nn.Parameter(scale * torch.randn((input_resolution // patch_size) ** 2 + 1, width))
+        self.positional_embedding = nn.Parameter(
+            scale * torch.randn((input_resolution // patch_size) ** 2 + 1, width))
         self.ln_pre = LayerNorm(width)
 
         # parameter check
-        assert ((not prompt_mode == PromptMode.NONE) or (prompt_num == 0 and prompt_layers == 0))
-        self.transformer = Transformer(
+        assert ((not prompt_mode == PromptMode.NONE) or (
+            prompt_num == 0 and prompt_layers == 0))
+        self.transformer = VTransformer(
+            # structure
             width,
             layers,
             heads,
+            # frame & video
+            frame_num=frame_num,
+            patch_num=self.patch_num,
+            # prompts
             prompt_num=prompt_num,
             prompt_mode=prompt_mode,
             prompt_layers=prompt_layers,
             prompt_dropout=prompt_dropout,
+            # generic
             attn_record=attn_record,
             ignore_attr=ignore_attr
         )
@@ -533,7 +663,8 @@ class VisionTransformer(nn.Module):
 
     def forward(self, x: torch.Tensor):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
-        x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
+        # shape = [*, width, grid ** 2]
+        x = x.reshape(x.shape[0], x.shape[1], -1)
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
         x = torch.cat(
             [
@@ -553,15 +684,17 @@ class VisionTransformer(nn.Module):
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x)
+        x, s = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
+        s = s.permute(1, 0, 2)
 
         x = self.ln_post(x[:, 0, :])
+        s = self.ln_post(s).mean(1)
 
         if self.proj is not None:
             x = x @ self.proj
 
-        return x
+        return x, s
 
     def prompt_parameters(self):
         return self.transformer.prompt_parameters()
@@ -618,16 +751,17 @@ class CLIP(nn.Module):
             width=transformer_width,
             layers=transformer_layers,
             heads=transformer_heads,
-            attn_mask=self.build_attention_mask(),
-            ignore_attr=ignore_attr
+            attn_mask=self.build_attention_mask()
         )
 
         self.vocab_size = vocab_size
         self.token_embedding = nn.Embedding(vocab_size, transformer_width)
-        self.positional_embedding = nn.Parameter(torch.empty(self.context_length, transformer_width))
+        self.positional_embedding = nn.Parameter(
+            torch.empty(self.context_length, transformer_width))
         self.ln_final = LayerNorm(transformer_width)
 
-        self.text_projection = nn.Parameter(torch.empty(transformer_width, embed_dim))
+        self.text_projection = nn.Parameter(
+            torch.empty(transformer_width, embed_dim))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
         self.initialize_parameters()
@@ -649,7 +783,8 @@ class CLIP(nn.Module):
                     if name.endswith("bn3.weight"):
                         nn.init.zeros_(param)
 
-        proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+        proj_std = (self.transformer.width ** -0.5) * \
+            ((2 * self.transformer.layers) ** -0.5)
         attn_std = self.transformer.width ** -0.5
         fc_std = (2 * self.transformer.width) ** -0.5
         for block in self.transformer.resblocks:
@@ -659,7 +794,8 @@ class CLIP(nn.Module):
             nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
 
         if self.text_projection is not None:
-            nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+            nn.init.normal_(self.text_projection,
+                            std=self.transformer.width ** -0.5)
 
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the vision tokens
@@ -677,7 +813,8 @@ class CLIP(nn.Module):
         return self.visual(image.type(self.dtype))
 
     def encode_text(self, text):
-        x = self.token_embedding(text).type(self.dtype)  # [batch_size, n_ctx, d_model]
+        x = self.token_embedding(text).type(
+            self.dtype)  # [batch_size, n_ctx, d_model]
 
         x = x + self.positional_embedding.type(self.dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
@@ -687,7 +824,8 @@ class CLIP(nn.Module):
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)
+              ] @ self.text_projection
 
         return x
 
@@ -696,7 +834,8 @@ class CLIP(nn.Module):
         text_features = self.encode_text(text)
 
         # normalized features
-        image_features = image_features / image_features.norm(dim=1, keepdim=True)
+        image_features = image_features / \
+            image_features.norm(dim=1, keepdim=True)
         text_features = text_features / text_features.norm(dim=1, keepdim=True)
 
         # cosine similarity as logits
@@ -744,7 +883,8 @@ def build_model(state_dict: dict, **model_kargs):
             ]
         )
         vision_patch_size = state_dict["visual.conv1.weight"].shape[-1]
-        grid_size = round((state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
+        grid_size = round(
+            (state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
         image_resolution = vision_patch_size * grid_size
     else:
         counts: list = [
@@ -757,9 +897,11 @@ def build_model(state_dict: dict, **model_kargs):
         ]
         vision_layers = tuple(counts)
         vision_width = state_dict["visual.layer1.0.conv1.weight"].shape[0]
-        output_width = round((state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)
+        output_width = round(
+            (state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)
         vision_patch_size = None
-        assert output_width ** 2 + 1 == state_dict["visual.attnpool.positional_embedding"].shape[0]
+        assert output_width ** 2 + \
+            1 == state_dict["visual.attnpool.positional_embedding"].shape[0]
         image_resolution = output_width * 32
 
     embed_dim = state_dict["text_projection"].shape[1]
@@ -767,7 +909,8 @@ def build_model(state_dict: dict, **model_kargs):
     vocab_size = state_dict["token_embedding.weight"].shape[0]
     transformer_width = state_dict["ln_final.weight"].shape[0]
     transformer_heads = transformer_width // 64
-    transformer_layers = len(set(k.split(".")[2] for k in state_dict if k.startswith("transformer.resblocks")))
+    transformer_layers = len(
+        set(k.split(".")[2] for k in state_dict if k.startswith("transformer.resblocks")))
 
     model = CLIP(
         embed_dim,
