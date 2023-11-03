@@ -283,8 +283,8 @@ class MultiheadAttentionAttrExtract(nn.Module):
         s_k = s_k.view(*view_as)
         s_v = s_v.view(*view_as)
         s_q = s_q.repeat_interleave(frames, dim=0)
-        s_k = s_q.repeat_interleave(frames, dim=0)
-        s_v = s_q.repeat_interleave(frames, dim=0)
+        s_k = s_k.repeat_interleave(frames, dim=0)
+        s_v = s_v.repeat_interleave(frames, dim=0)
 
         s_aff = torch.einsum('nqhc,nkhc->nqkh', s_q / (s_q.size(-1) ** 0.5), k[:, 1:])  # ignore cls embedding
 
@@ -427,10 +427,10 @@ class VTransformer(nn.Module):
         ])
 
     def tuneable_modules(self):
-        items = []
+        modules = []
         for blk in self.resblocks:
-            items.extend(blk.tuneable_modules())
-        return items
+            modules.extend(blk.tuneable_modules())
+        return modules
 
     def forward(self, x: torch.Tensor, s: torch.Tensor):
         for blk in self.resblocks:
@@ -481,7 +481,7 @@ class VisionTransformer(nn.Module):
         # synoptic ability
         self.syno_embedding = nn.Parameter(scale * torch.randn(1, width))
 
-    def forward(self, x: torch.Tensor, summary: bool = False):
+    def forward(self, x: torch.Tensor, syno: bool = False):
         batch, frames = x.shape[:2]
         # x.shape = [batch,  frames, 3, px, px]
         x = self.conv1(x.flatten(0, 1)).unflatten(0, (batch, frames))
@@ -517,21 +517,21 @@ class VisionTransformer(nn.Module):
         x, s = self.transformer(x, s)
 
         x = self.ln_post(x[..., 0, :])
-        s = self.ln_post(s).mean(1)
+        s = self.ln_post(s.mean(1))
 
         if self.proj is not None:
             x = x @ self.proj
             s = s @ self.proj
 
-        if (summary):
+        if (syno):
             return x, s
         else:
             return x
 
     def tuneable_modules(self):
-        return self.transformer.tuneable_modules().extend([
-            self.syno_embedding
-        ])
+        modules = self.transformer.tuneable_modules()
+        modules.extend([self.syno_embedding])
+        return modules
 
 
 class CLIP(nn.Module):

@@ -8,7 +8,7 @@ from typing import List
 from src.clip import clip as CLIP
 from src.clip.model_vpt import LayerNorm
 from src.model.base import ODBinaryMetricClassifier
-from src.model.clip import FrameAttrExtractor
+from src.model.clip import VideoAttrExtractor
 
 
 class BinaryLinearClassifier(nn.Module):
@@ -18,7 +18,7 @@ class BinaryLinearClassifier(nn.Module):
         **kargs,
     ):
         super().__init__()
-        self.encoder = FrameAttrExtractor(
+        self.encoder = VideoAttrExtractor(
             *args,
             **kargs,
             ignore_attr=True
@@ -42,7 +42,7 @@ class BinaryLinearClassifier(nn.Module):
 
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
-        logits = self.proj(results["summaries"])
+        logits = self.proj(results["synos"])
         return dict(
             logits=logits,
             ** results
@@ -52,7 +52,6 @@ class BinaryLinearClassifier(nn.Module):
 class NativeSummaryVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
-        frame_num,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
         attn_record: bool = False,
@@ -62,7 +61,6 @@ class NativeSummaryVideoLearner(ODBinaryMetricClassifier):
         super().__init__()
         self.save_hyperparameters()
         params = dict(
-            frame_num=frame_num,
             architecture=architecture,
             text_embed=text_embed,
             attn_record=attn_record,
@@ -120,8 +118,6 @@ class NativeSummaryVideoLearner(ODBinaryMetricClassifier):
 
 if __name__ == "__main__":
     frames = 5
-    model = NativeSummaryVideoLearner(
-        frame_num=frames
-    )
+    model = NativeSummaryVideoLearner()
     model.to("cuda")
     model(torch.randn(9, frames, 3, 224, 224).to("cuda"))
