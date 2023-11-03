@@ -4,15 +4,10 @@ import torch.nn as nn
 import src.clip.clip as CLIP
 
 
-class FrameAttrExtractor(nn.Module):
+class VideoAttrExtractor(nn.Module):
     def __init__(
         self,
-        frame_num,
         architecture,
-        prompt_mode,
-        prompt_num,
-        prompt_layers,
-        prompt_dropout,
         text_embed,
         ignore_attr=False,
         attn_record=False,
@@ -23,13 +18,8 @@ class FrameAttrExtractor(nn.Module):
         self.model, self.transform = CLIP.load(
             architecture,
             "cpu",
-            prompt_mode=prompt_mode,
-            prompt_num=prompt_num,
-            prompt_layers=prompt_layers,
-            prompt_dropout=prompt_dropout,
             ignore_attr=ignore_attr,
-            attn_record=attn_record,
-            frame_num=frame_num
+            attn_record=attn_record
         )
 
         self.model = self.model.visual.float()
@@ -55,8 +45,8 @@ class FrameAttrExtractor(nn.Module):
         self.model.requires_grad_(False)
 
         if not frozen:
-            for param in self.model.prompt_parameters():
-                param.requires_grad_(True)
+            for module in self.model.tuneable_modules():
+                module.requires_grad_(True)
 
     @property
     def n_px(self):
@@ -71,47 +61,36 @@ class FrameAttrExtractor(nn.Module):
         return self.feat_dim
 
     def forward(self, x):
+        b, t = x.shape[:2]
         # pass throught for attributes
-        if (len(x.shape) > 4):
-            b, t = x.shape[:2]
-            embeds, summaries = self.model(x.flatten(0, 1))
-            embeds = embeds.unflatten(0, (b, t))
-        else:
-            embeds, summaries = self.model(x)
+        embeds, synos = self.model(x, syno=True)
         # retrieve all layer attributes
         layer_attrs = []
         for blk in self.model.transformer.resblocks:
             attrs = blk.pop_attr()
             # restore temporal dimension
             for attr_name in attrs:
-                if (len(x.shape) > 4):
-                    attrs[attr_name] = attrs[attr_name].unflatten(0, (b, t))
-                else:
-                    attrs[attr_name] = attrs[attr_name]
+                attrs[attr_name] = attrs[attr_name].unflatten(0, (b, t))
             layer_attrs.append(attrs)
         return dict(
             layer_attrs=layer_attrs,
             embeds=embeds,
-            summaries=summaries
+            synos=synos
         )
 
     def train(self, mode=True):
         super().train(mode)
         if (mode):
             self.model.eval()
-            for m in self.model.prompt_dropout_modules():
-                m.train()
+            for module in self.model.tuneable_modules():
+                if (issubclass(type(module), torch.nn.Module)):
+                    module.train()
         return self
 
 
 if __name__ == "__main__":
-    from src.clip.model_vpt import PromptMode
-    FrameAttrExtractor(
+    VideoAttrExtractor(
         "ViT-B/16",
-        prompt_mode=PromptMode.DEEP,
-        prompt_num=10,
-        prompt_layers=12,
-        prompt_dropout=0.2,
         text_embed=False,
         pretrain="logs/DFD-FFG/71hfy89x/checkpoints/epoch=38-step=8307_encoder.pth"
     )
