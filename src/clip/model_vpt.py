@@ -8,7 +8,7 @@ from torch import nn
 
 from enum import IntEnum, auto, IntFlag
 from collections import OrderedDict
-from typing import Tuple, Union
+from typing import Tuple, Union, List
 
 
 class Bottleneck(nn.Module):
@@ -329,7 +329,7 @@ class VResidualAttentionBlock(nn.Module):
         n_head: int,
         block_index: int,
         attn_record: bool = False,
-        ignore_attr: bool = False,
+        store_attrs: List[str] = [],
     ):
         super().__init__()
         # modified
@@ -340,7 +340,7 @@ class VResidualAttentionBlock(nn.Module):
         )
 
         self.block_index = block_index
-        self.ignore_attr = ignore_attr
+        self.store_attrs = store_attrs
 
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(OrderedDict([
@@ -365,7 +365,6 @@ class VResidualAttentionBlock(nn.Module):
         )
         linear.weight.data = torch.eye(d_model)
         return [linear]
-    
 
     def tuneable_modules(self):
         return [self.syno_mlp]
@@ -379,8 +378,11 @@ class VResidualAttentionBlock(nn.Module):
         return {k: self.attr[k] for k in self.attr}
 
     def set_attr(self, **attr):
-        if not self.ignore_attr:
-            self.attr = attr
+        self.attr = {
+            k: attr[k]
+            for k in attr
+            if k in self.store_attrs
+        }
 
     def attention(self, x: torch.Tensor, s: torch.Tensor):
         return self.attn(x, s)
@@ -409,7 +411,7 @@ class VTransformer(nn.Module):
         layers: int,
         heads: int,
         attn_record: bool = False,
-        ignore_attr: bool = False
+        store_attrs: List[str] = []
     ):
         super().__init__()
         self.width = width
@@ -422,7 +424,7 @@ class VTransformer(nn.Module):
                 n_head=heads,
                 block_index=i,
                 attn_record=attn_record,
-                ignore_attr=ignore_attr
+                store_attrs=store_attrs
             )
             for i in range(layers)
         ])
@@ -450,7 +452,7 @@ class VisionTransformer(nn.Module):
         heads: int,
         output_dim: int,
         attn_record: bool = False,
-        ignore_attr: bool = False
+        store_attrs: List[str] = []
     ):
         super().__init__()
         self.input_resolution = input_resolution
@@ -473,7 +475,7 @@ class VisionTransformer(nn.Module):
             heads,
             # generic
             attn_record=attn_record,
-            ignore_attr=ignore_attr
+            store_attrs=store_attrs
         )
 
         self.ln_post = LayerNorm(width)
@@ -550,7 +552,7 @@ class CLIP(nn.Module):
         transformer_width: int,
         transformer_heads: int,
         transformer_layers: int,
-        ignore_attr: bool = False,
+        store_attrs: List[str] = [],
         **model_kargs
     ):
         super().__init__()
@@ -575,7 +577,7 @@ class CLIP(nn.Module):
                 layers=vision_layers,
                 heads=vision_heads,
                 output_dim=embed_dim,
-                ignore_attr=ignore_attr,
+                store_attrs=store_attrs,
                 **model_kargs
             )
 

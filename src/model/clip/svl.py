@@ -20,8 +20,7 @@ class BinaryLinearClassifier(nn.Module):
         super().__init__()
         self.encoder = VideoAttrExtractor(
             *args,
-            **kargs,
-            ignore_attr=True
+            **kargs
         )
         create_proj_module = (
             lambda x: nn.Sequential(
@@ -56,7 +55,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         text_embed: bool = False,
         attn_record: bool = False,
         pretrain: str = None,
-        label_weights: List[float] = [1, 1]
+        label_weights: List[float] = [1, 1],
+        store_attrs: List[str] = []
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -64,7 +64,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             architecture=architecture,
             text_embed=text_embed,
             attn_record=attn_record,
-            pretrain=pretrain
+            pretrain=pretrain,
+            store_attrs=store_attrs
         )
         self.model = BinaryLinearClassifier(**params)
 
