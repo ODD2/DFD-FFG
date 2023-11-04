@@ -68,9 +68,6 @@ class VideoAttrExtractor(nn.Module):
         layer_attrs = []
         for blk in self.model.transformer.resblocks:
             attrs = blk.pop_attr()
-            # restore temporal dimension
-            for attr_name in attrs:
-                attrs[attr_name] = attrs[attr_name].unflatten(0, (b, t))
             layer_attrs.append(attrs)
         return dict(
             layer_attrs=layer_attrs,

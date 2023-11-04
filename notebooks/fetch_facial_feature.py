@@ -15,20 +15,19 @@ import torchvision.transforms as T
 
 
 from tqdm import tqdm
-from src.clip.model_vpt import PromptMode
 from notebooks.tools import extract_features
-from src.model.clip.snvl import FrameAttrExtractor
+from src.model.clip import VideoAttrExtractor
 from src.dataset.ffpp import FFPP, FFPPSampleStrategy, FFPPAugmentation
 from sklearn.cluster import KMeans
 
-SAMPLE_NUM = 10
+SAMPLE_NUM = 2000
 
 
 def fetch_semantic_features(
     encoder,
     df_types=["REAL", "NT", "DF", "FS", "F2F"],
     subjects=['q', 'k', 'v', 'out', "emb"],
-    seconds=3,
+    seconds=2,
     frames=1,
     sample_num=100,
     save_path="",
@@ -59,7 +58,7 @@ def fetch_semantic_features(
         transform=T.Compose([
             T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC)
         ]),
-        max_clips=3
+        max_clips=5
     )
 
     # the following patch locations are based on a 14x14 grid.
@@ -116,7 +115,7 @@ def fetch_semantic_features(
     layer_num = len(encoder.model.transformer.resblocks)
     semantic_patches = {
         s: {
-            k: [[] for _ in range(layer_num)]
+            k: [dict(embed=0, count=0) for _ in range(layer_num)]
             for k in semantic_locations.keys()
         }
         for s in subjects
@@ -191,45 +190,18 @@ def fetch_semantic_features(
             for l in range(layer_num):
                 for s in subjects:
                     for p, loc in rrc_semantic_locations.items():
-                        semantic_patches[s][p][l].extend(
-                            features[l][s][0, loc].tolist()
-                        )
-
-    def centroid(points):
-        if (len(points) == 0):
-            return None
-
-        points = torch.tensor(points)
-        # sort_point_l2_idx = torch.nn.functional.mse_loss(
-        #     # points.unsqueeze(0).repeat(points.shape[0], 1, 1),
-        #     # points.unsqueeze(1).repeat(1, points.shape[0], 1),
-        #     points.unsqueeze(0),
-        #     points.unsqueeze(1),
-        #     reduction="none"
-        # ).flatten(1).sum(1).sort(descending=True)[1]
-        sort_point_l2_idx = (
-            (
-                1 - torch.nn.functional.cosine_similarity(
-                    # points.unsqueeze(0).repeat(points.shape[0], 1, 1),
-                    # points.unsqueeze(1).repeat(1, points.shape[0], 1),
-                    # reduction="none",
-                    points.unsqueeze(0),
-                    points.unsqueeze(1),
-                    dim=-1
-                )
-            ).flatten(1).sum(1).sort(descending=True)[1]
-        )
-        skip_num = int(sort_point_l2_idx.shape[0] * 0.9)
-        target_indices = sort_point_l2_idx[skip_num:]
-        return points[target_indices].mean(0)
+                        location_embeds = features[l][s][:, :, loc].flatten(0, -2).cpu()
+                        location_embeds /= location_embeds.norm(dim=-1, keepdim=True)
+                        semantic_patches[s][p][l]["embed"] += location_embeds.sum(dim=0)
+                        semantic_patches[s][p][l]["count"] += location_embeds.shape[0]
 
     semantic_patches = {
         s: {
             p: [
+
                 (
-                    centroid(semantic_patches[s][p][l])
-                    if centroid_mode else
-                    torch.tensor(semantic_patches[s][p][l]).mean(dim=0)
+                    semantic_patches[s][p][l]["embed"] /
+                    semantic_patches[s][p][l]["count"]
                 )
                 for l in range(layer_num)
             ]
@@ -247,24 +219,9 @@ def fetch_semantic_features(
 
 # %%
 if __name__ == "__main__":
-    # encoder = FrameAttrExtractor(
-    #     architecture="ViT-B/16",
-    #     prompt_dropout=0,
-    #     prompt_layers=0,
-    #     prompt_mode=PromptMode.NONE,
-    #     prompt_num=0,
-    #     text_embed=False,
-    #     pretrain="misc/FaRL-Base-Patch16-LAIONFace20M-ep64.pth"
-    # )
-
-    encoder = FrameAttrExtractor(
+    encoder = VideoAttrExtractor(
         architecture="ViT-B/16",
-        prompt_dropout=0.2,
-        prompt_layers=12,
-        prompt_mode=PromptMode.DEEP,
-        prompt_num=10,
-        text_embed=False,
-        pretrain="logs/DFD-FFG/9smr6fw7/checkpoints/epoch=38-step=8307_encoder.pth"
+        text_embed=False
     )
 
     encoder.eval()
@@ -274,16 +231,8 @@ if __name__ == "__main__":
         encoder, df_types=["REAL"],
         sample_num=SAMPLE_NUM,
         visualize=False,
-        save_path=f"./misc/9smr6fw7_real_semantic_patches_v1_{SAMPLE_NUM}.pickle",
+        save_path=f"./misc/L14_real_semantic_patches_v2_{SAMPLE_NUM//100}.pickle",
         seed=1019
     )
-
-    # fetch_semantic_features(
-    #     encoder, df_types=["REAL"],
-    #     sample_num=SAMPLE_NUM,
-    #     visualize=False,
-    #     save_path=f"./misc/FL_real_semantic_patches_v1_{SAMPLE_NUM}.pickle",
-    #     seed=1019
-    # )
 
 # %%

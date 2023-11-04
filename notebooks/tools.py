@@ -7,14 +7,14 @@ import torch
 def extract_features(encoder, frame):
     assert len(frame.shape) == 4
     # get attributes from each CLIP ViT layer
-    kvs = encoder(frame.to("cuda"))["layer_attrs"]
+    kvs = encoder(frame.unsqueeze(0).to("cuda"))["layer_attrs"]
     # discard original CLS token and restore temporal dimension
     for i in range(len(kvs)):
-        for k in kvs[i].keys():
-            kvs[i][k] = kvs[i][k][:, 1:].to("cpu")
-            if (len(kvs[i][k].shape) == 4):
+        for k in ["q", "k", "v", "out", "emb"]:
+            kvs[i][k] = kvs[i][k][:, :, 1:].to("cpu")
+            if (len(kvs[i][k].shape) == 5):
                 kvs[i][k] = kvs[i][k].flatten(-2)
-            elif (len(kvs[i][k].shape) == 3):
+            elif (len(kvs[i][k].shape) == 4):
                 pass
             else:
                 raise NotImplementedError()
