@@ -245,11 +245,11 @@ class MultiheadAttentionAttrExtract(nn.Module):
 
     def forward(self, x: torch.Tensor, s: torch.Tensor):
         # x.shape = (batch, frames, grid**2 + 1, width)
-        # s.shape = (batch, frames, synos, width)
+        # s.shape = (batch, synos, width)
         batch, frames = x.shape[:2]
 
         # Original ViT Self-Attention
-        x = x.flatten(0, 1)  # shape = (batch*frames, grid**2 + 1, width)
+        # x = x.flatten(0, 1)  # shape = (batch*frames, grid**2 + 1, width)
 
         q, k, v = F.linear(
             x,
@@ -257,16 +257,16 @@ class MultiheadAttentionAttrExtract(nn.Module):
             self.in_proj_bias
         ).chunk(3, dim=-1)
 
-        view_as = (*q.shape[:2], self.n_head, -1)
+        view_as = (*q.shape[:3], self.n_head, -1)
 
         q = q.view(*view_as)
         k = k.view(*view_as)
         v = v.view(*view_as)
 
-        aff = torch.einsum('nqhc,nkhc->nqkh', q / (q.size(-1) ** 0.5), k)
+        aff = torch.einsum('ntqhc,ntkhc->ntqkh', q / (q.size(-1) ** 0.5), k)
 
         aff = aff.softmax(dim=-2)
-        mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
+        mix = torch.einsum('ntqlh,ntlhc->ntqhc', aff, v)
 
         out = self.out_proj(mix.flatten(-2))
 
@@ -277,31 +277,20 @@ class MultiheadAttentionAttrExtract(nn.Module):
             self.in_proj_bias
         ).chunk(3, dim=-1)
 
-        view_as = (*s_q.shape[:2], self.n_head, -1)
+        view_as = (s_q.shape[0], 1, s_q.shape[1], self.n_head, -1)
 
-        s_q = s_q.view(*view_as)
-        s_k = s_k.view(*view_as)
-        s_v = s_v.view(*view_as)
-        s_q = s_q.repeat_interleave(frames, dim=0)
-        s_k = s_k.repeat_interleave(frames, dim=0)
-        s_v = s_v.repeat_interleave(frames, dim=0)
+        s_q = s_q.view(*view_as).repeat(1, frames, 1, 1, 1)
+        s_k = s_k.view(*view_as).repeat(1, frames, 1, 1, 1)
+        s_v = s_v.view(*view_as).repeat(1, frames, 1, 1, 1)
 
-        s_aff = torch.einsum('nqhc,nkhc->nqkh', s_q / (s_q.size(-1) ** 0.5), k[:, 1:])  # ignore cls embedding
+        s_aff = torch.einsum('ntqhc,ntkhc->ntqkh', s_q / (s_q.size(-1) ** 0.5), k[:, :, 1:])  # ignore cls embedding
 
         s_aff = s_aff.softmax(dim=-2)
-        s_mix = torch.einsum('nqlh,nlhc->nqhc', s_aff, v[:, 1:])  # ignore cls embedding
+        s_mix = torch.einsum('ntqlh,ntlhc->ntqhc', s_aff, v[:, :, 1:])  # ignore cls embedding
 
-        s_mix = s_mix.unflatten(0, (batch, frames)).mean(dim=1)
+        s_mix = s_mix.mean(dim=1)
 
         s_out = self.out_proj(s_mix.flatten(-2))
-
-        # Restore Dimensions
-        q = q.unflatten(0, (batch, frames))
-        k = k.unflatten(0, (batch, frames))
-        v = v.unflatten(0, (batch, frames))
-        out = out.unflatten(0, (batch, frames))
-        aff = aff.unflatten(0, (batch, frames))
-        s_aff = s_aff.unflatten(0, (batch, frames))
 
         # record attentions
         if self.attn_record:

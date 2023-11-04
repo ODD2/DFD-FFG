@@ -53,10 +53,6 @@ class VideoAttrExtractor(nn.Module):
         return self.model.input_resolution
 
     @property
-    def n_patch(self):
-        return self.model.input_resolution // self.model.patch_size
-
-    @property
     def embed_dim(self):
         return self.feat_dim
 
