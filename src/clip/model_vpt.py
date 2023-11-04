@@ -241,7 +241,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
         # recordings
         self.attn_record = attn_record
         self.aff = None
-        self.saff = None
+        self.s_aff = None
 
     def forward(self, x: torch.Tensor, s: torch.Tensor):
         # x.shape = (batch, frames, grid**2 + 1, width)
