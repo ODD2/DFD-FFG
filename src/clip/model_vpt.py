@@ -365,7 +365,6 @@ class VResidualAttentionBlock(nn.Module):
         )
         linear.weight.data = torch.eye(d_model)
         return [linear]
-    
 
     def tuneable_modules(self):
         return [self.syno_mlp]
@@ -449,6 +448,7 @@ class VisionTransformer(nn.Module):
         layers: int,
         heads: int,
         output_dim: int,
+        num_frames: int,
         attn_record: bool = False,
         ignore_attr: bool = False
     ):
@@ -481,6 +481,7 @@ class VisionTransformer(nn.Module):
 
         # synoptic ability
         self.syno_embedding = nn.Parameter(scale * torch.randn(1, width))
+        self.temporal_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, width))
 
     def forward(self, x: torch.Tensor, syno: bool = False):
         batch, frames = x.shape[:2]
@@ -505,6 +506,7 @@ class VisionTransformer(nn.Module):
             dim=-2
         )  # shape = [batch, frames, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
+        x = x + self.temporal_embedding.to(x.dtype)
         x = self.ln_pre(x)
 
         s = (
@@ -531,7 +533,7 @@ class VisionTransformer(nn.Module):
 
     def tuneable_modules(self):
         modules = self.transformer.tuneable_modules()
-        modules.extend([self.syno_embedding])
+        modules.extend([self.syno_embedding, self.temporal_embedding])
         return modules
 
 

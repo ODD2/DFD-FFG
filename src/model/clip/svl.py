@@ -52,6 +52,7 @@ class BinaryLinearClassifier(nn.Module):
 class SynoVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
+        num_frames: int,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
         attn_record: bool = False,
@@ -64,7 +65,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             architecture=architecture,
             text_embed=text_embed,
             attn_record=attn_record,
-            pretrain=pretrain
+            pretrain=pretrain,
+            num_frames=num_frames
         )
         self.model = BinaryLinearClassifier(**params)
 
