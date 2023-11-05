@@ -14,22 +14,32 @@ from src.model.clip import VideoAttrExtractor
 class BinaryLinearClassifier(nn.Module):
     def __init__(
         self,
+        num_synos,
         *args,
         **kargs,
     ):
+        self.num_synos = num_synos
         super().__init__()
         self.encoder = VideoAttrExtractor(
             *args,
-            **kargs
+            **kargs,
+            num_synos=num_synos
         )
-        create_proj_module = (
-            lambda x: nn.Sequential(
-                LayerNorm(x),
-                nn.Dropout(),
-                nn.Linear(x, 2, bias=False)
-            )
+        self.post_ln = nn.Sequential(
+            LayerNorm(self.encoder.embed_dim),
+            nn.Dropout(),
         )
-        self.proj = create_proj_module(self.encoder.embed_dim)
+
+        self.projs = nn.ModuleList(
+            [
+                nn.Linear(
+                    self.encoder.embed_dim,
+                    2,
+                    bias=False
+                )
+                for _ in range(self.num_synos)
+            ]
+        )
 
     @property
     def transform(self):
@@ -41,7 +51,13 @@ class BinaryLinearClassifier(nn.Module):
 
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
-        logits = self.proj(results["synos"])
+        synos = results["synos"]
+        logits = torch.log(
+            sum([
+                self.projs[i](synos[:, i]).softmax(dim=-1) / self.num_synos
+                for i in range(self.num_synos)
+            ]) + 1e-6
+        )
         return dict(
             logits=logits,
             ** results
@@ -52,6 +68,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
         num_frames: int,
+        num_synos: int = 1,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
         attn_record: bool = False,
@@ -67,6 +84,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             attn_record=attn_record,
             pretrain=pretrain,
             num_frames=num_frames,
+            num_synos=num_synos,
             store_attrs=store_attrs
         )
         self.model = BinaryLinearClassifier(**params)
@@ -119,8 +137,103 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         }
 
 
+class FFGSynoVideoLearner(SynoVideoLearner):
+    def __init__(
+        self,
+        face_parts: List[str],
+        face_attn_attr: str,
+        face_feature_path: str,
+        store_attrs: List[str] = ["s_q"],
+        *args,
+        **kargs
+    ):
+        self.num_parts = len(face_parts)
+        assert self.num_parts > 1
+        num_synos = self.num_parts + 1
+        super().__init__(
+            *args,
+            **kargs,
+            store_attrs=store_attrs,
+            num_synos=num_synos
+        )
+        self.save_hyperparameters()
+
+        with open(face_feature_path, "rb") as f:
+            _face_features = pickle.load(f)
+            self.face_features = torch.stack(
+                [
+                    torch.stack([
+                        _face_features[face_attn_attr][p][l]
+                        for p in face_parts
+                    ])
+                    for l in range(self.model.encoder.model.transformer.layers)
+                ]
+            )
+            self.face_features = self.face_features.unsqueeze(1)
+
+    def shared_step(self, batch, stage):
+        result = super().shared_step(batch, stage)
+
+        if (stage == "train"):
+            dts_name = result["dts_name"]
+            x = batch["xyz"][0]
+
+            # face feature guided loss
+            qs = torch.stack(
+                [
+                    attrs["s_q"]
+                    for attrs in result["output"]["layer_attrs"]
+                ]
+            )  # qs.shape = [layer,b,t,syno,patch,head]
+
+            # Cosine Alignments
+
+            # qs = qs.mean(2).flatten(-2)
+            # face_features = self.face_features.to(dtype=qs.dtype, device=qs.device)
+
+            # cls_sim = (
+            #     1 - torch.nn.functional.cosine_similarity(
+            #         qs,
+            #         face_features,
+            #         dim=-1
+            #     )
+            # ).mean()
+
+            # Contrastive
+            qs = qs[:, :, :, 1:].mean(2).flatten(-2)
+            l, b, q = qs.shape[:3]
+            face_features = self.face_features.to(dtype=qs.dtype, device=qs.device)
+
+            face_features = face_features / face_features.norm(dim=-1, keepdim=True)
+            qs = qs / qs.norm(dim=-1, keepdim=True)
+
+            logits = 100 * (qs @ face_features.transpose(-1, -2))
+
+            cls_sim = torch.nn.functional.cross_entropy(
+                logits.flatten(0, 2),
+                (
+                    torch.range(0, self.num_parts - 1)
+                    .unsqueeze(0)
+                    .repeat((l * b * q, 1))
+                    .to(x.device)
+                ),
+                reduction="none"
+            ).mean()
+
+            self.log(
+                f"{stage}/{dts_name}/q_sim",
+                cls_sim,
+                batch_size=x.shape[0]
+            )
+            result["loss"] += cls_sim
+
+        return result
+
+
 if __name__ == "__main__":
     frames = 5
-    model = SynoVideoLearner()
+    model = SynoVideoLearner(attn_record=True)
     model.to("cuda")
-    model(torch.randn(9, frames, 3, 224, 224).to("cuda"))
+    logit = model(torch.randn(9, frames, 3, 224, 224).to("cuda"))["logits"]
+    logit.sum().backward()
+    print("done")

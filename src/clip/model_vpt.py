@@ -459,6 +459,7 @@ class VisionTransformer(nn.Module):
         heads: int,
         output_dim: int,
         num_frames: int,
+        num_synos: int = 1,
         attn_record: bool = False,
         store_attrs: List[str] = []
     ):
@@ -491,7 +492,7 @@ class VisionTransformer(nn.Module):
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
         # synoptic ability
-        self.syno_embedding = nn.Parameter(torch.zeros(1, width))
+        self.syno_embedding = nn.Parameter(torch.zeros(num_synos, width))
 
     def forward(self, x: torch.Tensor, syno: bool = False):
         batch, frames = x.shape[:2]
@@ -530,7 +531,7 @@ class VisionTransformer(nn.Module):
         x, s = self.transformer(x, s)
 
         x = self.ln_post(x[..., 0, :])
-        s = self.ln_post(s.mean(1))
+        s = self.ln_post(s)
 
         if self.proj is not None:
             x = x @ self.proj

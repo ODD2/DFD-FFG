@@ -10,6 +10,7 @@ class VideoAttrExtractor(nn.Module):
         architecture,
         text_embed,
         num_frames,
+        num_synos=1,
         store_attrs=[],
         attn_record=False,
         pretrain=None,
@@ -21,7 +22,8 @@ class VideoAttrExtractor(nn.Module):
             "cpu",
             num_frames=num_frames,
             store_attrs=store_attrs,
-            attn_record=attn_record
+            attn_record=attn_record,
+            num_synos=num_synos
         )
 
         self.model = self.model.visual.float()

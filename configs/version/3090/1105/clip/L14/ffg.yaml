@@ -5,7 +5,7 @@ model:
     architecture: ViT-L/14
     text_embed: false
     label_weights: [2.0, 0.5]
-    face_parts: ["lips"]
+    face_parts: ["lips","skin","eyes","nose"]
     face_attn_attr: "k"
     face_feature_path: "misc/L14_real_semantic_patches_v2_2000.pickle"
 trainer:
