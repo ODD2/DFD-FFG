@@ -9,3 +9,6 @@ data:
   init_args:
     batch_size: 1
     num_workers: 0
+    train_datamodules:
+      - init_args:
+          batch_size: 1
