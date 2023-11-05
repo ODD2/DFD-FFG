@@ -10,7 +10,7 @@ class VideoAttrExtractor(nn.Module):
         architecture,
         text_embed,
         num_frames,
-        ignore_attr=False,
+        store_attrs=[],
         attn_record=False,
         pretrain=None,
         frozen=False
@@ -20,7 +20,7 @@ class VideoAttrExtractor(nn.Module):
             architecture,
             "cpu",
             num_frames=num_frames,
-            ignore_attr=ignore_attr,
+            store_attrs=store_attrs,
             attn_record=attn_record
         )
 
@@ -55,10 +55,6 @@ class VideoAttrExtractor(nn.Module):
         return self.model.input_resolution
 
     @property
-    def n_patch(self):
-        return self.model.input_resolution // self.model.patch_size
-
-    @property
     def embed_dim(self):
         return self.feat_dim
 
@@ -70,9 +66,6 @@ class VideoAttrExtractor(nn.Module):
         layer_attrs = []
         for blk in self.model.transformer.resblocks:
             attrs = blk.pop_attr()
-            # restore temporal dimension
-            for attr_name in attrs:
-                attrs[attr_name] = attrs[attr_name].unflatten(0, (b, t))
             layer_attrs.append(attrs)
         return dict(
             layer_attrs=layer_attrs,

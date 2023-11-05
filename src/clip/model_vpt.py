@@ -8,7 +8,7 @@ from torch import nn
 
 from enum import IntEnum, auto, IntFlag
 from collections import OrderedDict
-from typing import Tuple, Union
+from typing import Tuple, Union, List
 
 
 class Bottleneck(nn.Module):
@@ -241,15 +241,15 @@ class MultiheadAttentionAttrExtract(nn.Module):
         # recordings
         self.attn_record = attn_record
         self.aff = None
-        self.saff = None
+        self.s_aff = None
 
     def forward(self, x: torch.Tensor, s: torch.Tensor, te: torch.Tensor):
         # x.shape = (batch, frames, grid**2 + 1, width)
-        # s.shape = (batch, frames, synos, width)
+        # s.shape = (batch, synos, width)
         batch, frames = x.shape[:2]
 
         # Original ViT Self-Attention
-        x = x.flatten(0, 1)  # shape = (batch*frames, grid**2 + 1, width)
+        # x = x.flatten(0, 1)  # shape = (batch*frames, grid**2 + 1, width)
 
         q, k, v = F.linear(
             x,
@@ -257,16 +257,16 @@ class MultiheadAttentionAttrExtract(nn.Module):
             self.in_proj_bias
         ).chunk(3, dim=-1)
 
-        view_as = (*q.shape[:2], self.n_head, -1)
+        view_as = (*q.shape[:3], self.n_head, -1)
 
         q = q.view(*view_as)
         k = k.view(*view_as)
         v = v.view(*view_as)
 
-        aff = torch.einsum('nqhc,nkhc->nqkh', q / (q.size(-1) ** 0.5), k)
+        aff = torch.einsum('ntqhc,ntkhc->ntqkh', q / (q.size(-1) ** 0.5), k)
 
         aff = aff.softmax(dim=-2)
-        mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
+        mix = torch.einsum('ntqlh,ntlhc->ntqhc', aff, v)
 
         out = self.out_proj(mix.flatten(-2))
 
@@ -277,32 +277,29 @@ class MultiheadAttentionAttrExtract(nn.Module):
             self.in_proj_bias
         ).chunk(3, dim=-1)
 
-        view_as = (*s_q.shape[:2], self.n_head, -1)
+        view_as = (s_q.shape[0], 1, s_q.shape[1], self.n_head, -1)
 
-        s_q = s_q.view(*view_as)
-        s_k = s_k.view(*view_as)
-        s_v = s_v.view(*view_as)
-        s_q = s_q.repeat_interleave(frames, dim=0)
-        s_k = s_k.repeat_interleave(frames, dim=0)
-        s_v = s_v.repeat_interleave(frames, dim=0)
-        te = te.view(te.shape[0], 1, self.n_head, -1).repeat(batch, 1, 1, 1)
+        s_q = s_q.view(*view_as).repeat(1, frames, 1, 1, 1)
+        s_k = s_k.view(*view_as).repeat(1, frames, 1, 1, 1)
+        s_v = s_v.view(*view_as).repeat(1, frames, 1, 1, 1)
+        te = te.view(1, te.shape[0], 1, self.n_head, -1)
 
-        s_aff = torch.einsum('nqhc,nkhc->nqkh', s_q / (s_q.size(-1) ** 0.5), k[:, 1:] + te)  # ignore cls embedding
+        s_aff = torch.einsum(
+            'ntqhc,ntkhc->ntqkh',
+            s_q / (s_q.size(-1) ** 0.5),
+            k[:, :, 1:] + te
+        )  # ignore cls embedding
 
         s_aff = s_aff.softmax(dim=-2)
-        s_mix = torch.einsum('nqlh,nlhc->nqhc', s_aff, v[:, 1:] + te)  # ignore cls embedding
+        s_mix = torch.einsum(
+            'ntqlh,ntlhc->ntqhc',
+            s_aff,
+            v[:, :, 1:] + te
+        )  # ignore cls embedding
 
-        s_mix = s_mix.unflatten(0, (batch, frames)).mean(dim=1)
+        s_mix = s_mix.mean(dim=1)
 
         s_out = self.out_proj(s_mix.flatten(-2))
-
-        # Restore Dimensions
-        q = q.unflatten(0, (batch, frames))
-        k = k.unflatten(0, (batch, frames))
-        v = v.unflatten(0, (batch, frames))
-        out = out.unflatten(0, (batch, frames))
-        aff = aff.unflatten(0, (batch, frames))
-        s_aff = s_aff.unflatten(0, (batch, frames))
 
         # record attentions
         if self.attn_record:
@@ -331,7 +328,7 @@ class VResidualAttentionBlock(nn.Module):
         block_index: int,
         num_frames: int,
         attn_record: bool = False,
-        ignore_attr: bool = False,
+        store_attrs: List[str] = [],
     ):
         super().__init__()
         # modified
@@ -342,7 +339,7 @@ class VResidualAttentionBlock(nn.Module):
         )
 
         self.block_index = block_index
-        self.ignore_attr = ignore_attr
+        self.store_attrs = store_attrs
 
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(OrderedDict([
@@ -382,8 +379,11 @@ class VResidualAttentionBlock(nn.Module):
         return {k: self.attr[k] for k in self.attr}
 
     def set_attr(self, **attr):
-        if not self.ignore_attr:
-            self.attr = attr
+        self.attr = {
+            k: attr[k]
+            for k in attr
+            if k in self.store_attrs
+        }
 
     def attention(self, x: torch.Tensor, s: torch.Tensor, te: torch.Tensor):
         return self.attn(x, s, te)
@@ -417,7 +417,7 @@ class VTransformer(nn.Module):
         heads: int,
         num_frames: int,
         attn_record: bool = False,
-        ignore_attr: bool = False,
+        store_attrs: List[str] = []
     ):
         super().__init__()
         self.width = width
@@ -431,7 +431,7 @@ class VTransformer(nn.Module):
                 block_index=i,
                 num_frames=num_frames,
                 attn_record=attn_record,
-                ignore_attr=ignore_attr
+                store_attrs=store_attrs
             )
             for i in range(layers)
         ])
@@ -460,7 +460,7 @@ class VisionTransformer(nn.Module):
         output_dim: int,
         num_frames: int,
         attn_record: bool = False,
-        ignore_attr: bool = False
+        store_attrs: List[str] = []
     ):
         super().__init__()
         self.input_resolution = input_resolution
@@ -484,7 +484,7 @@ class VisionTransformer(nn.Module):
             num_frames=num_frames,
             # generic
             attn_record=attn_record,
-            ignore_attr=ignore_attr
+            store_attrs=store_attrs
         )
 
         self.ln_post = LayerNorm(width)
@@ -562,7 +562,7 @@ class CLIP(nn.Module):
         transformer_width: int,
         transformer_heads: int,
         transformer_layers: int,
-        ignore_attr: bool = False,
+        store_attrs: List[str] = [],
         **model_kargs
     ):
         super().__init__()
@@ -587,7 +587,7 @@ class CLIP(nn.Module):
                 layers=vision_layers,
                 heads=vision_heads,
                 output_dim=embed_dim,
-                ignore_attr=ignore_attr,
+                store_attrs=store_attrs,
                 **model_kargs
             )
 
