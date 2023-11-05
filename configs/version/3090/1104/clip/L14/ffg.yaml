@@ -1,0 +1,11 @@
+model:
+  class_path: src.model.clip.svl.FFGSynoVideoLearner
+  init_args:
+    architecture: ViT-L/14
+    text_embed: false
+    label_weights: [2.0, 0.5]
+    face_parts: ["lips"]
+    face_attn_attr: "k"
+    face_feature_path: "misc/L14_real_semantic_patches_v2_2000.pickle"
+trainer:
+  accumulate_grad_batches: 1
