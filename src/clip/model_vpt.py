@@ -243,7 +243,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self.aff = None
         self.s_aff = None
 
-    def forward(self, x: torch.Tensor, s: torch.Tensor):
+    def forward(self, x: torch.Tensor, s: torch.Tensor, te: torch.Tensor):
         # x.shape = (batch, frames, grid**2 + 1, width)
         # s.shape = (batch, synos, width)
         batch, frames = x.shape[:2]
@@ -282,11 +282,20 @@ class MultiheadAttentionAttrExtract(nn.Module):
         s_q = s_q.view(*view_as).repeat(1, frames, 1, 1, 1)
         s_k = s_k.view(*view_as).repeat(1, frames, 1, 1, 1)
         s_v = s_v.view(*view_as).repeat(1, frames, 1, 1, 1)
+        te = te.view(1, te.shape[0], 1, self.n_head, -1)
 
-        s_aff = torch.einsum('ntqhc,ntkhc->ntqkh', s_q / (s_q.size(-1) ** 0.5), k[:, :, 1:])  # ignore cls embedding
+        s_aff = torch.einsum(
+            'ntqhc,ntkhc->ntqkh',
+            s_q / (s_q.size(-1) ** 0.5),
+            k[:, :, 1:] + te
+        )  # ignore cls embedding
 
         s_aff = s_aff.softmax(dim=-2)
-        s_mix = torch.einsum('ntqlh,ntlhc->ntqhc', s_aff, v[:, :, 1:])  # ignore cls embedding
+        s_mix = torch.einsum(
+            'ntqlh,ntlhc->ntqhc',
+            s_aff,
+            v[:, :, 1:] + te
+        )  # ignore cls embedding
 
         s_mix = s_mix.mean(dim=1)
 
@@ -317,6 +326,7 @@ class VResidualAttentionBlock(nn.Module):
         d_model: int,
         n_head: int,
         block_index: int,
+        num_frames: int,
         attn_record: bool = False,
         store_attrs: List[str] = [],
     ):
@@ -343,6 +353,8 @@ class VResidualAttentionBlock(nn.Module):
             *self.make_syno_mlp(d_model=d_model)
         )
 
+        scale = (d_model ** -0.5)
+        self.temporal_embedding = nn.Parameter(scale * torch.randn(num_frames, d_model))
         # preserve attrs
         self.attr = {}
 
@@ -356,7 +368,7 @@ class VResidualAttentionBlock(nn.Module):
         return [linear]
 
     def tuneable_modules(self):
-        return [self.syno_mlp]
+        return [self.syno_mlp, self.temporal_embedding]
 
     def pop_attr(self):
         ret = self.get_attr()
@@ -373,12 +385,16 @@ class VResidualAttentionBlock(nn.Module):
             if k in self.store_attrs
         }
 
-    def attention(self, x: torch.Tensor, s: torch.Tensor):
-        return self.attn(x, s)
+    def attention(self, x: torch.Tensor, s: torch.Tensor, te: torch.Tensor):
+        return self.attn(x, s, te)
 
     def forward(self, x: torch.Tensor, s: torch.Tensor):
         self.pop_attr()
-        data = self.attention(self.ln_1(x), self.ln_1(self.syno_mlp(s)))
+        data = self.attention(
+            self.ln_1(x),
+            self.ln_1(self.syno_mlp(s)),
+            self.ln_1(self.temporal_embedding)
+        )
         x = x + data["out"]
         x = x + self.mlp(self.ln_2(x))
         s = s + data["s_out"]
@@ -399,6 +415,7 @@ class VTransformer(nn.Module):
         width: int,
         layers: int,
         heads: int,
+        num_frames: int,
         attn_record: bool = False,
         store_attrs: List[str] = []
     ):
@@ -412,6 +429,7 @@ class VTransformer(nn.Module):
                 d_model=width,
                 n_head=heads,
                 block_index=i,
+                num_frames=num_frames,
                 attn_record=attn_record,
                 store_attrs=store_attrs
             )
@@ -440,6 +458,7 @@ class VisionTransformer(nn.Module):
         layers: int,
         heads: int,
         output_dim: int,
+        num_frames: int,
         attn_record: bool = False,
         store_attrs: List[str] = []
     ):
@@ -462,6 +481,7 @@ class VisionTransformer(nn.Module):
             width,
             layers,
             heads,
+            num_frames=num_frames,
             # generic
             attn_record=attn_record,
             store_attrs=store_attrs
@@ -471,7 +491,7 @@ class VisionTransformer(nn.Module):
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
         # synoptic ability
-        self.syno_embedding = nn.Parameter(scale * torch.randn(1, width))
+        self.syno_embedding = nn.Parameter(torch.zeros(1, width))
 
     def forward(self, x: torch.Tensor, syno: bool = False):
         batch, frames = x.shape[:2]
@@ -503,7 +523,8 @@ class VisionTransformer(nn.Module):
             .to(x.dtype)
             .unsqueeze(0)
             .repeat(x.shape[0], 1, 1)
-        )  # shape = [batch, synos, width]
+        ) + self.class_embedding.view(1, 1, -1).to(x.dtype)
+        # shape = [batch, synos, width]
         s = self.ln_pre(s)
 
         x, s = self.transformer(x, s)

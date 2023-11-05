@@ -9,6 +9,7 @@ class VideoAttrExtractor(nn.Module):
         self,
         architecture,
         text_embed,
+        num_frames,
         store_attrs=[],
         attn_record=False,
         pretrain=None,
@@ -18,6 +19,7 @@ class VideoAttrExtractor(nn.Module):
         self.model, self.transform = CLIP.load(
             architecture,
             "cpu",
+            num_frames=num_frames,
             store_attrs=store_attrs,
             attn_record=attn_record
         )
