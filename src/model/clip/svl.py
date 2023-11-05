@@ -143,18 +143,22 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         face_parts: List[str],
         face_attn_attr: str,
         face_feature_path: str,
-        store_attrs: List[str] = ["s_q"],
+        syno_attn_attr: str = "s_q",
+        ffg_temper: float = 50,
+        loss_weight: float = 1e-1,
         *args,
         **kargs
     ):
-        self.num_parts = len(face_parts)
-        assert self.num_parts > 1
-        num_synos = self.num_parts + 1
+        self.num_face_parts = len(face_parts)
+        self.face_attn_attr = face_attn_attr
+        self.syno_attn_attr = syno_attn_attr
+        self.ffg_temper = ffg_temper
+        self.loss_weight = loss_weight
         super().__init__(
             *args,
             **kargs,
-            store_attrs=store_attrs,
-            num_synos=num_synos
+            store_attrs=[syno_attn_attr],
+            num_synos=self.num_face_parts
         )
         self.save_hyperparameters()
 
@@ -163,7 +167,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             self.face_features = torch.stack(
                 [
                     torch.stack([
-                        _face_features[face_attn_attr][p][l]
+                        _face_features[self.face_attn_attr][p][l]
                         for p in face_parts
                     ])
                     for l in range(self.model.encoder.model.transformer.layers)
@@ -179,40 +183,39 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             x = batch["xyz"][0]
 
             # face feature guided loss
-            qs = torch.stack(
+            target_attn_attrs = torch.stack(
                 [
-                    attrs["s_q"]
+                    attrs[self.syno_attn_attr]
                     for attrs in result["output"]["layer_attrs"]
                 ]
             )  # qs.shape = [layer,b,t,syno,patch,head]
 
-            # Cosine Alignments
+            if (len(target_attn_attrs.shape) == 4):
+                # shape = [l, b, synos, head*width]
+                # for: out, emb
+                pass
+            elif (len(target_attn_attrs.shape) == 6):
+                # shape = [l, b, t, synos, head, width]
+                # for: q, k, v
+                target_attn_attrs = target_attn_attrs.mean(2).flatten(-2)
+            else:
+                raise NotImplementedError()
 
-            # qs = qs.mean(2).flatten(-2)
-            # face_features = self.face_features.to(dtype=qs.dtype, device=qs.device)
-
-            # cls_sim = (
-            #     1 - torch.nn.functional.cosine_similarity(
-            #         qs,
-            #         face_features,
-            #         dim=-1
-            #     )
-            # ).mean()
-
-            # Contrastive
-            qs = qs[:, :, :, 1:].mean(2).flatten(-2)
-            l, b, q = qs.shape[:3]
-            face_features = self.face_features.to(dtype=qs.dtype, device=qs.device)
+            l, b, q = target_attn_attrs.shape[:3]
+            face_features = self.face_features.to(
+                dtype=target_attn_attrs.dtype,
+                device=target_attn_attrs.device
+            )
 
             face_features = face_features / face_features.norm(dim=-1, keepdim=True)
-            qs = qs / qs.norm(dim=-1, keepdim=True)
+            target_attn_attrs = target_attn_attrs / target_attn_attrs.norm(dim=-1, keepdim=True)
 
-            logits = 100 * (qs @ face_features.transpose(-1, -2))
+            logits = self.ffg_temper * (target_attn_attrs @ face_features.transpose(-1, -2))
 
             cls_sim = torch.nn.functional.cross_entropy(
                 logits.flatten(0, 2),
                 (
-                    torch.range(0, self.num_parts - 1)
+                    torch.range(0, self.num_face_parts - 1)
                     .unsqueeze(0)
                     .repeat((l * b * q, 1))
                     .to(x.device)
@@ -221,11 +224,11 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             ).mean()
 
             self.log(
-                f"{stage}/{dts_name}/q_sim",
+                f"{stage}/{dts_name}/syno_sim",
                 cls_sim,
                 batch_size=x.shape[0]
             )
-            result["loss"] += cls_sim
+            result["loss"] += cls_sim * self.loss_weight
 
         return result
 

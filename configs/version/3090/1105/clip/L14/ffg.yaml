@@ -6,7 +6,8 @@ model:
     text_embed: false
     label_weights: [2.0, 0.5]
     face_parts: ["lips","skin","eyes","nose"]
-    face_attn_attr: "k"
+    face_attn_attr: "emb"
+    syno_attn_attr: "s_emb"
     face_feature_path: "misc/L14_real_semantic_patches_v2_2000.pickle"
 trainer:
   accumulate_grad_batches: 1

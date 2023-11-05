@@ -4,7 +4,7 @@ import lightning.pytorch as pl
 from torch import optim
 from functools import partial
 from torchmetrics.aggregation import MeanMetric
-from torchmetrics.classification import AUROC, Accuracy
+from torchmetrics.classification import AUROC, Accuracy, BinaryConfusionMatrix
 
 
 class ODClassifier(pl.LightningModule):
@@ -68,6 +68,7 @@ class ODBinaryMetricClassifier(ODClassifier):
         self.metric_map = {
             "auc": partial(AUROC, task="BINARY", num_classes=2),
             "acc": partial(Accuracy, task="BINARY", num_classes=2),
+            "cm": partial(BinaryConfusionMatrix, normalize="true"),
             "loss": MeanMetric
         }
 
@@ -92,19 +93,24 @@ class ODBinaryMetricClassifier(ODClassifier):
         loss = result["loss"].detach()
         self.get_metric(result['dts_name'], 'auc', logits.device).update(logits[:, 1], labels)
         self.get_metric(result['dts_name'], 'acc', logits.device).update(logits[:, 1], labels)
+        self.get_metric(result['dts_name'], 'cm', logits.device).update(logits[:, 1], labels)
         self.get_metric(result['dts_name'], 'loss', logits.device).update(loss)
 
     def shared_beg_epoch_procedure(self, phase):
         self.reset_metrics()
 
     def shared_end_epoch_procedure(self, phase):
-        self.log_dict(
-            {
-                f'{phase}/{dts_name}/{metric_name}': metric_obj.compute()
-                for dts_name, metrics in self.dts_metrics.items()
-                for metric_name, metric_obj in metrics.items()
-            }
-        )
+        log_datas = {}
+        for dts_name, metrics in self.dts_metrics.items():
+            for metric_name, metric_obj in metrics.items():
+                values = metric_obj.compute().flatten()
+                name = f'{phase}/{dts_name}/{metric_name}'
+                if (len(values) == 1):
+                    log_datas[name] = values
+                else:
+                    for i, v in enumerate(values):
+                        log_datas[f"{name}/#{i}"] = v
+        self.log_dict(log_datas)
         self.reset_metrics()
 
     # validation

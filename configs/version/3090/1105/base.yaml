@@ -28,7 +28,7 @@ trainer:
   enable_model_summary: null
   accumulate_grad_batches: 1
   gradient_clip_val: 1
-  gradient_clip_algorithm: null
+  gradient_clip_algorithm: value
   deterministic: true
   benchmark: null
   inference_mode: true
