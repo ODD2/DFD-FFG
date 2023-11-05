@@ -25,10 +25,6 @@ class BinaryLinearClassifier(nn.Module):
             **kargs,
             num_synos=num_synos
         )
-        self.post_ln = nn.Sequential(
-            LayerNorm(self.encoder.embed_dim),
-            nn.Dropout(),
-        )
 
         self.projs = nn.ModuleList(
             [
