@@ -9,7 +9,7 @@ class VideoAttrExtractor(nn.Module):
         self,
         architecture,
         text_embed,
-        num_frames,
+        num_frames=1,
         num_synos=1,
         store_attrs=[],
         attn_record=False,

@@ -353,7 +353,7 @@ class VResidualAttentionBlock(nn.Module):
             *self.make_syno_mlp(d_model=d_model)
         )
 
-        scale = (d_model ** -0.5)
+        scale = (0.1 * d_model ** -0.5)
         self.temporal_embedding = nn.Parameter(scale * torch.randn(num_frames, d_model))
         # preserve attrs
         self.attr = {}
@@ -393,7 +393,7 @@ class VResidualAttentionBlock(nn.Module):
         data = self.attention(
             self.ln_1(x),
             self.ln_1(self.syno_mlp(s)),
-            self.ln_1(self.temporal_embedding)
+            self.temporal_embedding
         )
         x = x + data["out"]
         x = x + self.mlp(self.ln_2(x))

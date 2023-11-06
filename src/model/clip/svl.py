@@ -219,9 +219,11 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             cls_sim = torch.nn.functional.cross_entropy(
                 logits.flatten(0, 2),
                 (
-                    torch.range(0, self.num_face_parts - 1)
-                    .unsqueeze(0)
-                    .repeat((l * b * q, 1))
+                    torch.arange(
+                        0,
+                        self.num_face_parts
+                    )
+                    .repeat((l * b))
                     .to(x.device)
                 ),
                 reduction="none"
