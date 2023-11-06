@@ -63,7 +63,7 @@ class BinaryLinearClassifier(nn.Module):
 class SynoVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
-        num_frames: int,
+        num_frames: int = 1,
         num_synos: int = 1,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
@@ -139,11 +139,15 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         face_parts: List[str],
         face_attn_attr: str,
         face_feature_path: str,
+        num_frames: int = 1,
+        architecture: str = 'ViT-B/16',
+        text_embed: bool = False,
+        attn_record: bool = False,
+        pretrain: str = None,
+        label_weights: List[float] = [1, 1],
         syno_attn_attr: str = "s_q",
         ffg_temper: float = 50,
-        loss_weight: float = 1e-1,
-        *args,
-        **kargs
+        loss_weight: float = 1e-1
     ):
         self.num_face_parts = len(face_parts)
         self.face_attn_attr = face_attn_attr
@@ -151,10 +155,14 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         self.ffg_temper = ffg_temper
         self.loss_weight = loss_weight
         super().__init__(
-            *args,
-            **kargs,
-            store_attrs=[syno_attn_attr],
-            num_synos=self.num_face_parts
+            num_frames=num_frames,
+            architecture=architecture,
+            text_embed=text_embed,
+            attn_record=attn_record,
+            pretrain=pretrain,
+            label_weights=label_weights,
+            num_synos=self.num_face_parts,
+            store_attrs=[self.syno_attn_attr]
         )
         self.save_hyperparameters()
 
