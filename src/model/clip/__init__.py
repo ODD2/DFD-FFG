@@ -1,4 +1,5 @@
 import torch
+import random
 import logging
 import torch.nn as nn
 import src.clip.clip as CLIP
@@ -14,7 +15,8 @@ class VideoAttrExtractor(nn.Module):
         store_attrs=[],
         attn_record=False,
         pretrain=None,
-        frozen=False
+        frozen=False,
+        mask_ratio=0.0
     ):
         super().__init__()
         self.model, self.transform = CLIP.load(
@@ -25,7 +27,7 @@ class VideoAttrExtractor(nn.Module):
             attn_record=attn_record,
             num_synos=num_synos
         )
-
+        self.mask_ratio = mask_ratio
         self.model = self.model.visual.float()
 
         if not text_embed:
@@ -57,13 +59,37 @@ class VideoAttrExtractor(nn.Module):
         return self.model.input_resolution
 
     @property
+    def patch_size(self):
+        return self.model.patch_size
+
+    @property
+    def patch_num(self):
+        return self.model.patch_num
+
+    @property
+    def n_patch(self):
+        return int(self.n_px // self.patch_size)
+
+    @property
     def embed_dim(self):
         return self.feat_dim
 
     def forward(self, x):
         b, t = x.shape[:2]
+
+        if self.training and self.mask_ratio > 0:
+            mpi = torch.rand(self.model.patch_num) < self.mask_ratio
+            mpi = mpi.to(dtype=float, device=x.device) * -1e4
+            mpi = mpi.unsqueeze(1)
+        else:
+            mpi = torch.tensor(0, device=x.device)
+
         # pass throught for attributes
-        embeds, synos = self.model(x, syno=True)
+        embeds, synos = self.model(
+            x,
+            syno=True,
+            mpi=mpi
+        )
         # retrieve all layer attributes
         layer_attrs = []
         for blk in self.model.transformer.resblocks:

@@ -23,15 +23,20 @@ class BinaryLinearClassifier(nn.Module):
         self.encoder = VideoAttrExtractor(
             *args,
             **kargs,
-            num_synos=num_synos
+            num_synos=num_synos,
         )
+
+        self.ln_post = nn.LayerNorm(self.encoder.embed_dim)
 
         self.projs = nn.ModuleList(
             [
-                nn.Linear(
-                    self.encoder.embed_dim,
-                    2,
-                    bias=False
+                nn.Sequential(
+                    nn.Dropout(),
+                    nn.Linear(
+                        self.encoder.embed_dim,
+                        2,
+                        bias=False
+                    )
                 )
                 for _ in range(self.num_synos)
             ]
@@ -48,12 +53,11 @@ class BinaryLinearClassifier(nn.Module):
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
         synos = results["synos"]
-        logits = torch.log(
-            sum([
-                self.projs[i](synos[:, i]).softmax(dim=-1) / self.num_synos
-                for i in range(self.num_synos)
-            ]) + 1e-6
-        )
+        logits = sum([
+            self.projs[i](self.ln_post(synos[:, i]))
+            for i in range(self.num_synos)
+        ])
+
         return dict(
             logits=logits,
             ** results
@@ -70,7 +74,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         attn_record: bool = False,
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
-        store_attrs: List[str] = []
+        store_attrs: List[str] = [],
+        mask_ratio: float = 0.0
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -81,7 +86,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             pretrain=pretrain,
             num_frames=num_frames,
             num_synos=num_synos,
-            store_attrs=store_attrs
+            store_attrs=store_attrs,
+            mask_ratio=mask_ratio
         )
         self.model = BinaryLinearClassifier(**params)
 
@@ -146,14 +152,17 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
         syno_attn_attr: str = "s_q",
-        ffg_temper: float = 50,
-        loss_weight: float = 1e-1
+        ffg_temper: float = 5,
+        ffg_weight: float = 1e-1,
+        ffg_layers: int = -1,
+        mask_ratio: float = 0.5,
     ):
         self.num_face_parts = len(face_parts)
         self.face_attn_attr = face_attn_attr
         self.syno_attn_attr = syno_attn_attr
         self.ffg_temper = ffg_temper
-        self.loss_weight = loss_weight
+        self.ffg_weight = ffg_weight
+        self.ffg_layers = ffg_layers
         super().__init__(
             num_frames=num_frames,
             architecture=architecture,
@@ -162,7 +171,8 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             pretrain=pretrain,
             label_weights=label_weights,
             num_synos=self.num_face_parts,
-            store_attrs=[self.syno_attn_attr]
+            store_attrs=[self.syno_attn_attr],
+            mask_ratio=mask_ratio
         )
         self.save_hyperparameters()
 
@@ -205,12 +215,24 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             else:
                 raise NotImplementedError()
 
-            l, b, q = target_attn_attrs.shape[:3]
             face_features = self.face_features.to(
                 dtype=target_attn_attrs.dtype,
                 device=target_attn_attrs.device
             )
 
+            if self.ffg_layers == -1:
+                pass
+            elif self.ffg_layers > 0:
+                layers = (
+                    self.model.encoder.model.transformer.layers -
+                    self.ffg_layers
+                )
+                face_features = face_features[layers:]
+                target_attn_attrs = target_attn_attrs[layers:]
+            else:
+                raise NotImplementedError()
+
+            l, b, q = target_attn_attrs.shape[:3]
             face_features = face_features / face_features.norm(dim=-1, keepdim=True)
             target_attn_attrs = target_attn_attrs / target_attn_attrs.norm(dim=-1, keepdim=True)
 
@@ -234,7 +256,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
                 cls_sim,
                 batch_size=x.shape[0]
             )
-            result["loss"] += cls_sim * self.loss_weight
+            result["loss"] += cls_sim * self.ffg_weight
 
         return result
 
