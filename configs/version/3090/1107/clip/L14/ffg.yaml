@@ -10,6 +10,7 @@ model:
     syno_attn_attr: "s_q"
     face_feature_path: "misc/L14_real_semantic_patches_v2_2000.pickle"
     ffg_temper: 50
+    ffg_weight: 0.1
     mask_ratio: 0.5
 trainer:
   accumulate_grad_batches: 1
