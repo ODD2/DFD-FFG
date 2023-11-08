@@ -369,6 +369,9 @@ class VResidualAttentionBlock(nn.Module):
             d_model,
             d_model,
         )
+
+        proj_std = (d_model ** -0.5) * ((2 * (self.block_index + 1)) ** -0.5)
+        nn.init.normal_(linear.weight, std=proj_std)
         return [ln, linear]
 
     def tuneable_modules(self):
