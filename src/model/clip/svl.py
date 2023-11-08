@@ -74,7 +74,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
         # train specific
-        num_train_df_types: int,
+        num_train_df_types: int = 5,
 
         # generic
         num_frames: int = 1,

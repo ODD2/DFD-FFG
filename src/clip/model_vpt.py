@@ -517,7 +517,7 @@ class VisionTransformer(nn.Module):
         self,
         x: torch.Tensor,
         syno: bool = False,
-        mpi: torch.Tensor = [],
+        mpi: torch.Tensor = 0,
     ):
         batch, frames = x.shape[:2]
         # x.shape = [batch,  frames, 3, px, px]
@@ -555,6 +555,9 @@ class VisionTransformer(nn.Module):
 
         x = self.ln_post(x[..., 0, :])
 
+        if self.proj is not None:
+            x = x @ self.proj
+
         if (syno):
             return x, s
         else:
@@ -582,6 +585,8 @@ class CLIP(nn.Module):
         transformer_heads: int,
         transformer_layers: int,
         store_attrs: List[str] = [],
+        # video
+        num_frames=1,
         **model_kargs
     ):
         super().__init__()
@@ -600,6 +605,7 @@ class CLIP(nn.Module):
         else:
             vision_heads = vision_width // 64
             self.visual = VisionTransformer(
+                num_frames=num_frames,
                 input_resolution=image_resolution,
                 patch_size=vision_patch_size,
                 width=vision_width,
@@ -607,7 +613,7 @@ class CLIP(nn.Module):
                 heads=vision_heads,
                 output_dim=embed_dim,
                 store_attrs=store_attrs,
-                **model_kargs
+                ** model_kargs
             )
 
         self.transformer = Transformer(
