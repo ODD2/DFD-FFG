@@ -299,7 +299,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
         # mask certain patches
         s_aff += mpi
 
-        s_aff = s_aff.softmax(dim=-2) * 10
+        s_aff = s_aff.softmax(dim=-2)
         s_mix = torch.einsum(
             'ntqlh,ntlhc->ntqhc',
             s_aff,

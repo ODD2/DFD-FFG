@@ -1,6 +1,7 @@
 model:
   class_path: src.model.clip.svl.FFGSynoVideoLearner
   init_args:
+    num_train_df_types: 5
     num_frames: 10
     architecture: ViT-L/14
     text_embed: false

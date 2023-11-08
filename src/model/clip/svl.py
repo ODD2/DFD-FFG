@@ -15,6 +15,7 @@ class BinaryLinearClassifier(nn.Module):
     def __init__(
         self,
         num_synos,
+        num_train_df_types,
         *args,
         **kargs,
     ):
@@ -34,7 +35,7 @@ class BinaryLinearClassifier(nn.Module):
                     nn.Dropout(),
                     nn.Linear(
                         self.encoder.embed_dim,
-                        2,
+                        2 + num_train_df_types,
                         bias=False
                     )
                 )
@@ -53,13 +54,18 @@ class BinaryLinearClassifier(nn.Module):
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
         synos = results["synos"]
-        logits = sum([
+        _logits = sum([
             self.projs[i](self.ln_post(synos[:, i]))
             for i in range(self.num_synos)
         ])
+        # real/fake generic logits
+        logits = _logits[:, :2]
+        # ffpp classification logits
+        ffpp_logits = _logits[:, 2:]
 
         return dict(
             logits=logits,
+            ffpp_logits=ffpp_logits,
             ** results
         )
 
@@ -67,6 +73,10 @@ class BinaryLinearClassifier(nn.Module):
 class SynoVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
+        # train specific
+        num_train_df_types: int,
+
+        # generic
         num_frames: int = 1,
         num_synos: int = 1,
         architecture: str = 'ViT-B/16',
@@ -75,7 +85,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
         store_attrs: List[str] = [],
-        mask_ratio: float = 0.0
+        mask_ratio: float = 0.0,
+
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -87,7 +98,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             num_frames=num_frames,
             num_synos=num_synos,
             store_attrs=store_attrs,
-            mask_ratio=mask_ratio
+            mask_ratio=mask_ratio,
+            num_train_df_types=num_train_df_types
         )
         self.model = BinaryLinearClassifier(**params)
 
@@ -122,6 +134,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             )
         )
 
+        loss = cls_loss.mean()
+
         if (stage == "train"):
             self.log(
                 f"{stage}/{dts_name}/loss",
@@ -129,10 +143,25 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
                 batch_size=logits.shape[0]
             )
 
+        if (stage == "train"):
+            df_labels = batch["df_labels"]
+            ffpp_logits = output["ffpp_logits"]
+            df_cls_loss = nn.functional.cross_entropy(
+                ffpp_logits,
+                df_labels,
+                reduction="none"
+            )
+            self.log(
+                f"{stage}/{dts_name}/ffpp_cls_loss",
+                df_cls_loss.mean(),
+                batch_size=logits.shape[0]
+            )
+            loss += df_cls_loss.mean()
+
         return {
             "logits": logits,
             "labels": y,
-            "loss": cls_loss.mean(),
+            "loss": loss,
             "dts_name": dts_name,
             "indices": indices,
             "output": output
@@ -142,9 +171,12 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
 class FFGSynoVideoLearner(SynoVideoLearner):
     def __init__(
         self,
+        # train specific
+        num_train_df_types: int,
         face_parts: List[str],
         face_attn_attr: str,
         face_feature_path: str,
+        # generic
         num_frames: int = 1,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
@@ -164,6 +196,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         self.ffg_weight = ffg_weight
         self.ffg_layers = ffg_layers
         super().__init__(
+            num_train_df_types=num_train_df_types,
             num_frames=num_frames,
             architecture=architecture,
             text_embed=text_embed,
