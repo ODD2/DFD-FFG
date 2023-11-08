@@ -372,6 +372,7 @@ class VResidualAttentionBlock(nn.Module):
             d_model,
             bias=False
         )
+        linear.weight.data = torch.eye(d_model)
         return [linear]
 
     def tuneable_modules(self):
@@ -410,7 +411,7 @@ class VResidualAttentionBlock(nn.Module):
         self.pop_attr()
         data = self.attention(
             self.ln_1(x),
-            self.ln_1(x[:, :, [0]].mean(1) + self.syno_mlp(s)),
+            self.ln_1(s),
             self.temporal_embedding,
             mpi
         )
@@ -511,6 +512,7 @@ class VisionTransformer(nn.Module):
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
         # synoptic ability
+        self.num_synos = num_synos
         self.syno_embedding = nn.Parameter(torch.zeros(num_synos, width))
 
     def forward(
@@ -550,6 +552,7 @@ class VisionTransformer(nn.Module):
             .repeat(x.shape[0], 1, 1)
         )
         # shape = [batch, synos, width]
+        s = self.ln_pre(s)
 
         x, s = self.transformer(x, s, mpi)
 
@@ -567,6 +570,9 @@ class VisionTransformer(nn.Module):
         modules = self.transformer.tuneable_modules()
         modules.extend([self.syno_embedding])
         return modules
+
+    def post_init_tuneables(self):
+        self.syno_embedding.data = self.class_embedding.unsqueeze(0).repeat((self.num_synos, 1)).data
 
 
 class CLIP(nn.Module):

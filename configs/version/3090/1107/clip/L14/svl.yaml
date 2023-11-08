@@ -6,6 +6,6 @@ model:
     architecture: ViT-L/14
     text_embed: false
     label_weights: [2.0, 0.5]
-    mask_ratio: 0.5
+    mask_ratio: 0.0
 trainer:
   accumulate_grad_batches: 1

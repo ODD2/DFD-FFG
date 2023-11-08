@@ -29,6 +29,7 @@ class VideoAttrExtractor(nn.Module):
         )
         self.mask_ratio = mask_ratio
         self.model = self.model.visual.float()
+        self.model.post_init_tuneables()
 
         if not text_embed:
             self.model.proj = None

@@ -8,7 +8,9 @@
             "name": "Python: Arbitrary",
             "type": "python",
             "request": "launch",
-            "module": "notebooks.text_prompt.gender_alignment",
+            // "module": "notebooks.attention_visualize.encoder",
+            // "module": "notebooks.ffg_similarity.mined_features",
+            "module": "notebooks.ffg_similarity.syno_query",
             "justMyCode": true
         },
         {
@@ -27,11 +29,12 @@
             "justMyCode": false,
             "args": [
                 "--config",
-                "configs/generic/base.yaml",
+                "configs/version/3090/1107/base.yaml",
                 "--trainer.precision=16",
                 // ######### LMVL #########
                 "--config",
-                "configs/version/1031/clip/L14/ftfe/lmvl.yaml",
+                "configs/version/3090/1107/clip/L14/ffg.yaml",
+                // "--model.init_args.ffg_layers=8",
                 // "--config",
                 // "configs/generic/model/clip/ftfe/amg.yaml",
                 // "--model.init_args.architecture=ViT-B/14",
@@ -44,9 +47,17 @@
                 // "--config",
                 // "configs/generic/model/clip/L14/vpt.yaml",
                 // #########################
+                "--trainer.logger.offline=true",
+                "--config",
+                "configs/version/3090/1107/experiment/v1.yaml",
+                "--trainer.limit_val_batches=10",
                 "--config",
                 "configs/generic/test.yaml",
-                "--trainer.strategy=ddp",
+                // "--trainer.strategy=ddp",
+                // "--model.class_path=src.model.clip.svl.FFGSynoVideoLearner",
+                // "--model.init_args.face_parts=[lips]",
+                // "--model.init_args.face_attn_attr=q",
+                // "--model.init_args.face_feature_path=misc/L14_real_semantic_patches_v2_2000.pickle",
             ]
         },
         {
@@ -57,10 +68,10 @@
             "justMyCode": false,
             "args": [
                 // "--config",
-                "logs/DFD-FFG(v100)/24ugmkpg/setting.yaml",
+                "logs/DFD-FFG/hd9twd8v/setting.yaml",
                 "configs/generic/inference.yaml",
                 // "logs/DFD-FFG(v100)/24ugmkpg/checkpoints/epoch=7-step=1341.ckpt",
-                "logs/DFD-FFG(v100)/24ugmkpg/checkpoints/last.ckpt"
+                "logs/DFD-FFG/hd9twd8v/checkpoints/last.ckpt"
             ]
         },
         {
@@ -99,10 +110,10 @@
             "justMyCode": false
         },
         {
-            "name": "Python: CLIPNSVL",
+            "name": "Python: CLIPSVL",
             "type": "python",
             "request": "launch",
-            "module": "src.model.clip.nsvl",
+            "module": "src.model.clip.svl",
             "justMyCode": false
         },
     ]
