@@ -243,7 +243,11 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self.aff = None
         self.s_aff = None
 
-    def forward(self, x: torch.Tensor, s: torch.Tensor, te: torch.Tensor):
+    def forward(
+        self,
+        x: torch.Tensor,
+        s: torch.Tensor
+    ):
         # x.shape = (batch, frames, grid**2 + 1, width)
         # s.shape = (batch, synos, width)
         batch, frames = x.shape[:2]
@@ -282,23 +286,21 @@ class MultiheadAttentionAttrExtract(nn.Module):
         s_q = s_q.view(*view_as).repeat(1, frames, 1, 1, 1)
         s_k = s_k.view(*view_as).repeat(1, frames, 1, 1, 1)
         s_v = s_v.view(*view_as).repeat(1, frames, 1, 1, 1)
-        te = te.view(1, te.shape[0], 1, self.n_head, -1)
 
         s_aff = torch.einsum(
             'ntqhc,ntkhc->ntqkh',
             s_q / (s_q.size(-1) ** 0.5),
-            k[:, :, 1:] + te
+            k[:, :, 1:]
         )  # ignore cls embedding
 
         s_aff = s_aff.softmax(dim=-2)
         s_mix = torch.einsum(
             'ntqlh,ntlhc->ntqhc',
             s_aff,
-            v[:, :, 1:] + te
+            v[:, :, 1:]
         )  # ignore cls embedding
 
         s_mix = s_mix.mean(dim=1)
-
         s_out = self.out_proj(s_mix.flatten(-2))
 
         # record attentions
@@ -349,12 +351,6 @@ class VResidualAttentionBlock(nn.Module):
         ]))
         self.ln_2 = LayerNorm(d_model)
 
-        self.syno_mlp = nn.Sequential(
-            *self.make_syno_mlp(d_model=d_model)
-        )
-
-        scale = (0.1 * d_model ** -0.5)
-        self.temporal_embedding = nn.Parameter(scale * torch.randn(num_frames, d_model))
         # preserve attrs
         self.attr = {}
 
@@ -368,7 +364,10 @@ class VResidualAttentionBlock(nn.Module):
         return [linear]
 
     def tuneable_modules(self):
-        return [self.syno_mlp, self.temporal_embedding]
+        return []
+
+    def post_init_tuneables(self):
+        pass
 
     def pop_attr(self):
         ret = self.get_attr()
@@ -385,15 +384,22 @@ class VResidualAttentionBlock(nn.Module):
             if k in self.store_attrs
         }
 
-    def attention(self, x: torch.Tensor, s: torch.Tensor, te: torch.Tensor):
-        return self.attn(x, s, te)
+    def attention(
+        self,
+        x: torch.Tensor,
+        s: torch.Tensor
+    ):
+        return self.attn(x, s)
 
-    def forward(self, x: torch.Tensor, s: torch.Tensor):
+    def forward(
+        self,
+        x: torch.Tensor,
+        s: torch.Tensor
+    ):
         self.pop_attr()
         data = self.attention(
             self.ln_1(x),
-            self.ln_1(self.syno_mlp(s)),
-            self.temporal_embedding
+            self.ln_1(s),
         )
         x = x + data["out"]
         x = x + self.mlp(self.ln_2(x))
@@ -441,6 +447,10 @@ class VTransformer(nn.Module):
         for blk in self.resblocks:
             modules.extend(blk.tuneable_modules())
         return modules
+
+    def post_init_tuneables(self):
+        for blk in self.resblocks:
+            blk.post_init_tuneables()
 
     def forward(self, x: torch.Tensor, s: torch.Tensor):
         for blk in self.resblocks:
@@ -492,9 +502,14 @@ class VisionTransformer(nn.Module):
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
         # synoptic ability
+        self.num_synos = num_synos
         self.syno_embedding = nn.Parameter(torch.zeros(num_synos, width))
 
-    def forward(self, x: torch.Tensor, syno: bool = False):
+    def forward(
+        self,
+        x: torch.Tensor,
+        syno: bool = False
+    ):
         batch, frames = x.shape[:2]
         # x.shape = [batch,  frames, 3, px, px]
         x = self.conv1(x.flatten(0, 1)).unflatten(0, (batch, frames))
@@ -524,18 +539,16 @@ class VisionTransformer(nn.Module):
             .to(x.dtype)
             .unsqueeze(0)
             .repeat(x.shape[0], 1, 1)
-        ) + self.class_embedding.view(1, 1, -1).to(x.dtype)
+        )
         # shape = [batch, synos, width]
         s = self.ln_pre(s)
 
         x, s = self.transformer(x, s)
 
         x = self.ln_post(x[..., 0, :])
-        s = self.ln_post(s)
 
         if self.proj is not None:
             x = x @ self.proj
-            s = s @ self.proj
 
         if (syno):
             return x, s
@@ -546,6 +559,10 @@ class VisionTransformer(nn.Module):
         modules = self.transformer.tuneable_modules()
         modules.extend([self.syno_embedding])
         return modules
+
+    def post_init_tuneables(self):
+        self.syno_embedding.data = self.class_embedding.unsqueeze(0).repeat((self.num_synos, 1)).data
+        self.transformer.post_init_tuneables()
 
 
 class CLIP(nn.Module):
@@ -564,6 +581,8 @@ class CLIP(nn.Module):
         transformer_heads: int,
         transformer_layers: int,
         store_attrs: List[str] = [],
+        # video
+        num_frames=1,
         **model_kargs
     ):
         super().__init__()
@@ -582,6 +601,7 @@ class CLIP(nn.Module):
         else:
             vision_heads = vision_width // 64
             self.visual = VisionTransformer(
+                num_frames=num_frames,
                 input_resolution=image_resolution,
                 patch_size=vision_patch_size,
                 width=vision_width,
@@ -589,7 +609,7 @@ class CLIP(nn.Module):
                 heads=vision_heads,
                 output_dim=embed_dim,
                 store_attrs=store_attrs,
-                **model_kargs
+                ** model_kargs
             )
 
         self.transformer = Transformer(

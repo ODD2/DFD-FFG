@@ -1,4 +1,5 @@
 import torch
+import random
 import logging
 import torch.nn as nn
 import src.clip.clip as CLIP
@@ -27,6 +28,7 @@ class VideoAttrExtractor(nn.Module):
         )
 
         self.model = self.model.visual.float()
+        self.model.post_init_tuneables()
 
         if not text_embed:
             self.model.proj = None
@@ -55,6 +57,18 @@ class VideoAttrExtractor(nn.Module):
     @property
     def n_px(self):
         return self.model.input_resolution
+
+    @property
+    def patch_size(self):
+        return self.model.patch_size
+
+    @property
+    def patch_num(self):
+        return self.model.patch_num
+
+    @property
+    def n_patch(self):
+        return int(self.n_px // self.patch_size)
 
     @property
     def embed_dim(self):

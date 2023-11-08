@@ -23,8 +23,10 @@ class BinaryLinearClassifier(nn.Module):
         self.encoder = VideoAttrExtractor(
             *args,
             **kargs,
-            num_synos=num_synos
+            num_synos=num_synos,
         )
+
+        self.ln_post = nn.LayerNorm(self.encoder.embed_dim)
 
         self.projs = nn.ModuleList(
             [
@@ -116,6 +118,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             )
         )
 
+        loss = cls_loss.mean()
+
         if (stage == "train"):
             self.log(
                 f"{stage}/{dts_name}/loss",
@@ -126,7 +130,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         return {
             "logits": logits,
             "labels": y,
-            "loss": cls_loss.mean(),
+            "loss": loss,
             "dts_name": dts_name,
             "indices": indices,
             "output": output
@@ -139,6 +143,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         face_parts: List[str],
         face_attn_attr: str,
         face_feature_path: str,
+        # generic
         num_frames: int = 1,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
@@ -146,15 +151,17 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
         syno_attn_attr: str = "s_q",
-        ffg_temper: float = 50,
-        loss_weight: float = 1e-1,
+        ffg_temper: float = 5,
+        ffg_weight: float = 1e-1,
+        ffg_layers: int = -1,
         store_attrs: List[str] = []
     ):
         self.num_face_parts = len(face_parts)
         self.face_attn_attr = face_attn_attr
         self.syno_attn_attr = syno_attn_attr
         self.ffg_temper = ffg_temper
-        self.loss_weight = loss_weight
+        self.ffg_weight = ffg_weight
+        self.ffg_layers = ffg_layers
         super().__init__(
             num_frames=num_frames,
             architecture=architecture,
@@ -206,28 +213,48 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             else:
                 raise NotImplementedError()
 
-            l, b, q = target_attn_attrs.shape[:3]
             face_features = self.face_features.to(
                 dtype=target_attn_attrs.dtype,
                 device=target_attn_attrs.device
             )
 
-            face_features = face_features / face_features.norm(dim=-1, keepdim=True)
-            target_attn_attrs = target_attn_attrs / target_attn_attrs.norm(dim=-1, keepdim=True)
+            if self.ffg_layers == -1:
+                pass
+            elif self.ffg_layers > 0:
+                layers = (
+                    self.model.encoder.model.transformer.layers -
+                    self.ffg_layers
+                )
+                face_features = face_features[layers:]
+                target_attn_attrs = target_attn_attrs[layers:]
+            else:
+                raise NotImplementedError()
 
-            logits = self.ffg_temper * (target_attn_attrs @ face_features.transpose(-1, -2))
+            l, b, q = target_attn_attrs.shape[:3]
+            # face_features = face_features / face_features.norm(dim=-1, keepdim=True)
+            # target_attn_attrs = target_attn_attrs / target_attn_attrs.norm(dim=-1, keepdim=True)
 
-            cls_sim = torch.nn.functional.cross_entropy(
-                logits.flatten(0, 2),
-                (
-                    torch.arange(
-                        0,
-                        self.num_face_parts
-                    )
-                    .repeat((l * b))
-                    .to(x.device)
-                ),
-                reduction="none"
+            # logits = self.ffg_temper * (target_attn_attrs @ face_features.transpose(-1, -2))
+
+            # cls_sim = torch.nn.functional.cross_entropy(
+            #     logits.flatten(0, 2),
+            #     (
+            #         torch.arange(
+            #             0,
+            #             self.num_face_parts
+            #         )
+            #         .repeat((l * b))
+            #         .to(x.device)
+            #     ),
+            #     reduction="none"
+            # ).mean()
+
+            cls_sim = (
+                1 - torch.nn.functional.cosine_similarity(
+                    face_features,
+                    target_attn_attrs,
+                    dim=-1
+                )
             ).mean()
 
             self.log(
@@ -235,7 +262,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
                 cls_sim,
                 batch_size=x.shape[0]
             )
-            result["loss"] += cls_sim * self.loss_weight
+            result["loss"] += cls_sim * self.ffg_weight
 
         return result
 
