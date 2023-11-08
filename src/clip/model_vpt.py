@@ -290,14 +290,20 @@ class MultiheadAttentionAttrExtract(nn.Module):
         s_aff = torch.einsum(
             'ntqhc,ntkhc->ntqkh',
             s_q / (s_q.size(-1) ** 0.5),
-            k[:, :, 1:]
+            torch.cat(
+                [s_k, k[:, :, 1:]],
+                dim=2
+            )
         )  # ignore cls embedding
 
         s_aff = s_aff.softmax(dim=-2)
         s_mix = torch.einsum(
             'ntqlh,ntlhc->ntqhc',
             s_aff,
-            v[:, :, 1:]
+            torch.cat(
+                [s_v, v[:, :, 1:]],
+                dim=2
+            )
         )  # ignore cls embedding
 
         s_mix = s_mix.mean(dim=1)
@@ -329,6 +335,7 @@ class VResidualAttentionBlock(nn.Module):
         n_head: int,
         block_index: int,
         num_frames: int,
+        num_synos: int,
         attn_record: bool = False,
         store_attrs: List[str] = [],
     ):
@@ -422,6 +429,7 @@ class VTransformer(nn.Module):
         layers: int,
         heads: int,
         num_frames: int,
+        num_synos: int,
         attn_record: bool = False,
         store_attrs: List[str] = []
     ):
@@ -436,6 +444,7 @@ class VTransformer(nn.Module):
                 n_head=heads,
                 block_index=i,
                 num_frames=num_frames,
+                num_synos=num_synos,
                 attn_record=attn_record,
                 store_attrs=store_attrs
             )
@@ -493,6 +502,7 @@ class VisionTransformer(nn.Module):
             layers,
             heads,
             num_frames=num_frames,
+            num_synos=num_synos,
             # generic
             attn_record=attn_record,
             store_attrs=store_attrs
