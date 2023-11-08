@@ -50,12 +50,10 @@ class BinaryLinearClassifier(nn.Module):
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
         synos = results["synos"]
-        logits = torch.log(
-            sum([
-                self.projs[i](synos[:, i]).softmax(dim=-1) / self.num_synos
-                for i in range(self.num_synos)
-            ]) + 1e-6
-        )
+        logits = sum([
+            self.projs[i](self.ln_post(synos[:, i]))
+            for i in range(self.num_synos)
+        ])
         return dict(
             logits=logits,
             ** results
