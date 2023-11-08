@@ -147,7 +147,8 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         label_weights: List[float] = [1, 1],
         syno_attn_attr: str = "s_q",
         ffg_temper: float = 50,
-        loss_weight: float = 1e-1
+        loss_weight: float = 1e-1,
+        store_attrs: List[str] = []
     ):
         self.num_face_parts = len(face_parts)
         self.face_attn_attr = face_attn_attr
@@ -162,7 +163,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             pretrain=pretrain,
             label_weights=label_weights,
             num_synos=self.num_face_parts,
-            store_attrs=[self.syno_attn_attr]
+            store_attrs=set([*store_attrs, self.syno_attn_attr])
         )
         self.save_hyperparameters()
 
