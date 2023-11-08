@@ -358,20 +358,21 @@ class VResidualAttentionBlock(nn.Module):
         ]))
         self.ln_2 = LayerNorm(d_model)
 
+        self.syno_mlp = nn.Sequential(*self.make_syno_mlp(d_model=d_model))
+
         # preserve attrs
         self.attr = {}
 
     def make_syno_mlp(self, d_model):
+        ln = nn.LayerNorm(d_model)
         linear = nn.Linear(
             d_model,
             d_model,
-            bias=False
         )
-        linear.weight.data = torch.eye(d_model)
-        return [linear]
+        return [ln, linear]
 
     def tuneable_modules(self):
-        return []
+        return [self.syno_mlp]
 
     def post_init_tuneables(self):
         pass
@@ -406,7 +407,7 @@ class VResidualAttentionBlock(nn.Module):
         self.pop_attr()
         data = self.attention(
             self.ln_1(x),
-            self.ln_1(s),
+            self.ln_1(s + self.syno_mlp(s)),
         )
         x = x + data["out"]
         x = x + self.mlp(self.ln_2(x))
