@@ -1,0 +1,12 @@
+# lightning.pytorch==2.0.7
+trainer:
+  max_epochs: 10 #!!!
+  limit_train_batches: 1.0 #!!!
+  limit_val_batches: 30 #!!!
+  log_every_n_steps: 1 #!!!
+# Limit the model to train on 30% of the training dataset
+data:
+  init_args:
+      train_datamodules:
+        - init_args:
+            ratio: 0.3
