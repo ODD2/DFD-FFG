@@ -229,30 +229,22 @@ class FFGSynoVideoLearner(SynoVideoLearner):
                 raise NotImplementedError()
 
             l, b, q = target_attn_attrs.shape[:3]
-            # face_features = face_features / face_features.norm(dim=-1, keepdim=True)
-            # target_attn_attrs = target_attn_attrs / target_attn_attrs.norm(dim=-1, keepdim=True)
+            face_features = face_features / face_features.norm(dim=-1, keepdim=True)
+            target_attn_attrs = target_attn_attrs / target_attn_attrs.norm(dim=-1, keepdim=True)
 
-            # logits = self.ffg_temper * (target_attn_attrs @ face_features.transpose(-1, -2))
+            logits = self.ffg_temper * (target_attn_attrs @ face_features.transpose(-1, -2))
 
-            # cls_sim = torch.nn.functional.cross_entropy(
-            #     logits.flatten(0, 2),
-            #     (
-            #         torch.arange(
-            #             0,
-            #             self.num_face_parts
-            #         )
-            #         .repeat((l * b))
-            #         .to(x.device)
-            #     ),
-            #     reduction="none"
-            # ).mean()
-
-            cls_sim = (
-                1 - torch.nn.functional.cosine_similarity(
-                    face_features,
-                    target_attn_attrs,
-                    dim=-1
-                )
+            cls_sim = torch.nn.functional.cross_entropy(
+                logits.flatten(0, 2),
+                (
+                    torch.arange(
+                        0,
+                        self.num_face_parts
+                    )
+                    .repeat((l * b))
+                    .to(x.device)
+                ),
+                reduction="none"
             ).mean()
 
             self.log(
