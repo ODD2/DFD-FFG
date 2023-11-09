@@ -124,7 +124,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
 
         if (stage == "train"):
             clip_video_features = output["embeds"].mean(dim=1)
-            syno_video_features = output["synos"].flatten(0, 1)
+            syno_video_features = output["synos"].mean(dim=1)
 
             clip_video_features = clip_video_features / clip_video_features.norm(dim=-1, keepdim=True)
             syno_video_features = syno_video_features / syno_video_features.norm(dim=-1, keepdim=True)
@@ -137,7 +137,12 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
                     0,
                     x.shape[0],
                     device=x.device
-                ).repeat_interleave(self.num_synos)
+                )
+            )
+            self.log(
+                f"{stage}/{dts_name}/video_align_loss",
+                video_align_loss.mean(),
+                batch_size=logits.shape[0]
             )
             loss += video_align_loss.mean() * self.align_weight
 
