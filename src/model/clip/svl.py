@@ -69,8 +69,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
         store_attrs: List[str] = [],
-        align_temper: float = 50,
-        align_weight: float = 1.0
+        align_temper: float = 30,
+        align_weight: float = 1e-1
 
     ):
         super().__init__()
@@ -166,9 +166,19 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
 class FFGSynoVideoLearner(SynoVideoLearner):
     def __init__(
         self,
-        face_parts: List[str],
-        face_attn_attr: str,
+        # ffg
         face_feature_path: str,
+        face_parts: List[str] = [
+            "lips",
+            "skin",
+            "eyes",
+            "nose"
+        ],
+        face_attn_attr: str = "k",
+        syno_attn_attr: str = "s_q",
+        ffg_temper: float = 30,
+        ffg_weight: float = 1e-1,
+        ffg_layers: int = -1,
         # generic
         num_frames: int = 1,
         architecture: str = 'ViT-B/16',
@@ -176,10 +186,6 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         attn_record: bool = False,
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
-        syno_attn_attr: str = "s_q",
-        ffg_temper: float = 5,
-        ffg_weight: float = 1e-1,
-        ffg_layers: int = -1,
         store_attrs: List[str] = []
     ):
         self.num_face_parts = len(face_parts)
