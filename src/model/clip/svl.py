@@ -232,6 +232,10 @@ class FFGSynoVideoLearner(SynoVideoLearner):
                 # shape = [l, b, synos, head*width]
                 # for: out, emb
                 pass
+            elif (len(target_attn_attrs.shape) == 5):
+                # shape = [l, b, synos, head,width]
+                # for: q, k, v
+                target_attn_attrs = target_attn_attrs.flatten(-2)
             elif (len(target_attn_attrs.shape) == 6):
                 # shape = [l, b, t, synos, head, width]
                 # for: q, k, v

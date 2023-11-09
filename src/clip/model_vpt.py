@@ -228,6 +228,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self,
         embed_dim,
         n_head,
+        syno_temper=1,
         attn_record=False
     ):
         super().__init__()
@@ -237,11 +238,24 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
         self.n_head = n_head
+        # syno's
+        self.syno_temper = syno_temper
+        self.syno_temporal = nn.Conv1d(
+            embed_dim,
+            embed_dim,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            groups=self.n_head
+        )
 
         # recordings
         self.attn_record = attn_record
         self.aff = None
         self.s_aff = None
+
+    def tuneable_modules(self):
+        return [self.syno_temporal]
 
     def forward(
         self,
@@ -281,32 +295,34 @@ class MultiheadAttentionAttrExtract(nn.Module):
             self.in_proj_bias
         ).chunk(3, dim=-1)
 
-        view_as = (s_q.shape[0], 1, s_q.shape[1], self.n_head, -1)
+        view_as = (*s_q.shape[:2], self.n_head, -1)
 
-        s_q = s_q.view(*view_as).repeat(1, frames, 1, 1, 1)
-        s_k = s_k.view(*view_as).repeat(1, frames, 1, 1, 1)
-        s_v = s_v.view(*view_as).repeat(1, frames, 1, 1, 1)
+        s_q = s_q.view(*view_as)
+        s_k = s_k.view(*view_as)
+        s_v = s_v.view(*view_as)
 
         s_aff = torch.einsum(
-            'ntqhc,ntkhc->ntqkh',
+            'nqhc,ntkhc->ntqkh',
             s_q / (s_q.size(-1) ** 0.5),
-            torch.cat(
-                [s_k, k[:, :, 1:]],
-                dim=2
-            )
+            k[:, :, 1:]
         )  # ignore cls embedding
 
-        s_aff = s_aff.softmax(dim=-2)
+        s_aff = s_aff.softmax(dim=-2) * self.syno_temper
+
         s_mix = torch.einsum(
             'ntqlh,ntlhc->ntqhc',
             s_aff,
-            torch.cat(
-                [s_v, v[:, :, 1:]],
-                dim=2
-            )
+            v[:, :, 1:]
         )  # ignore cls embedding
 
+        s_mix = s_mix.permute(0, 2, 3, 4, 1).flatten(2, 3).flatten(0, 1)
+        # shape= (batch *  synos, head * width, frames)
+        s_mix = self.syno_temporal(s_mix) + s_mix
+        s_mix = s_mix.unflatten(1, (self.n_head, -1)).unflatten(0, (batch, -1))
+        s_mix = s_mix.permute(0, 4, 1, 2, 3)
+        # shape = (batch, frames, synos, head, width)
         s_mix = s_mix.mean(dim=1)
+
         s_out = self.out_proj(s_mix.flatten(-2))
 
         # record attentions
@@ -370,12 +386,12 @@ class VResidualAttentionBlock(nn.Module):
             d_model
         )
 
-        proj_std = (d_model ** -0.5) * ((2 * (self.block_index + 1)) ** -0.5)
-        nn.init.normal_(linear.weight, std=proj_std)
+        linear.weight.data.zero_()
+        linear.bias.data.zero_()
         return [ln, linear]
 
     def tuneable_modules(self):
-        return [self.syno_mlp]
+        return self.attn.tuneable_modules() + [self.syno_mlp]
 
     def post_init_tuneables(self):
         pass
@@ -410,11 +426,11 @@ class VResidualAttentionBlock(nn.Module):
         self.pop_attr()
         data = self.attention(
             self.ln_1(x),
-            self.ln_1(s),
+            self.ln_1(s + self.syno_mlp(s)),
         )
         x = x + data["out"]
         x = x + self.mlp(self.ln_2(x))
-        s = s + data["s_out"] + self.syno_mlp(data["s_out"])
+        s = s + data["s_out"]
         s = s + self.mlp(self.ln_2(s))
 
         self.set_attr(

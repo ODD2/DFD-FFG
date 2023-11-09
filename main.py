@@ -49,7 +49,7 @@ def cli_main():
 
     # monitor model gradient and parameter histograms
     # (this severely slow down the training speed)
-    cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False)
+    cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False, log_freq=10)
 
     # load & configure datasets
     cli.datamodule.affine_model(cli.model)
