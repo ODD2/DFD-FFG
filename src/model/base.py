@@ -1,10 +1,31 @@
+import torch
 import torch.nn as nn
 import lightning.pytorch as pl
 
 from torch import optim
 from functools import partial
+from torchmetrics import Metric
 from torchmetrics.aggregation import MeanMetric
 from torchmetrics.classification import AUROC, Accuracy, BinaryConfusionMatrix
+
+
+class GenericStatistics(Metric):
+    def __init__(self):
+        super().__init__()
+        self.add_state("values", default=torch.tensor([]), dist_reduce_fx="sum")
+
+    def update(self, values: torch.Tensor):
+        assert len(values.shape) == 1
+
+        self.values = torch.cat([self.values, values])
+
+    def compute(self):
+        return torch.stack(
+            [
+                torch.mean(self.values),
+                torch.std(self.values)
+            ]
+        )
 
 
 class ODClassifier(pl.LightningModule):
@@ -69,7 +90,9 @@ class ODBinaryMetricClassifier(ODClassifier):
             "auc": partial(AUROC, task="BINARY", num_classes=2),
             "acc": partial(Accuracy, task="BINARY", num_classes=2),
             "cm": partial(BinaryConfusionMatrix, normalize="true"),
-            "loss": MeanMetric
+            "loss": MeanMetric,
+            "stats/real": GenericStatistics,
+            "stats/fake": GenericStatistics
         }
 
     def get_metric(self, dts_name, metric_name, device):
@@ -95,6 +118,9 @@ class ODBinaryMetricClassifier(ODClassifier):
         self.get_metric(result['dts_name'], 'acc', logits.device).update(logits[:, 1], labels)
         self.get_metric(result['dts_name'], 'cm', logits.device).update(logits[:, 1], labels)
         self.get_metric(result['dts_name'], 'loss', logits.device).update(loss)
+        labels = labels.to(dtype=bool)
+        self.get_metric(result['dts_name'], 'stats/real', logits.device).update(logits[~labels, 0])
+        self.get_metric(result['dts_name'], 'stats/fake', logits.device).update(logits[labels, 1])
 
     def shared_beg_epoch_procedure(self, phase):
         self.reset_metrics()
