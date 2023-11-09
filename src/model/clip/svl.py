@@ -26,8 +26,6 @@ class BinaryLinearClassifier(nn.Module):
             num_synos=num_synos,
         )
 
-        self.ln_post = nn.LayerNorm(self.encoder.embed_dim)
-
         self.projs = nn.ModuleList(
             [
                 nn.Linear(
@@ -51,7 +49,7 @@ class BinaryLinearClassifier(nn.Module):
         results = self.encoder(x)
         synos = results["synos"]
         logits = sum([
-            self.projs[i](self.ln_post(synos[:, i]))
+            self.projs[i](synos[:, i])
             for i in range(self.num_synos)
         ])
         return dict(
@@ -70,7 +68,10 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         attn_record: bool = False,
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
-        store_attrs: List[str] = []
+        store_attrs: List[str] = [],
+        align_temper: float = 50,
+        align_weight: float = 1.0
+
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -85,6 +86,9 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         )
         self.model = BinaryLinearClassifier(**params)
 
+        self.num_synos = num_synos
+        self.align_temper = align_temper
+        self.align_weight = align_weight
         self.label_weights = torch.tensor(label_weights)
 
     @property
@@ -117,6 +121,25 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         )
 
         loss = cls_loss.mean()
+
+        if (stage == "train"):
+            clip_video_features = output["embeds"].mean(dim=1)
+            syno_video_features = output["synos"].flatten(0, 1)
+
+            clip_video_features = clip_video_features / clip_video_features.norm(dim=-1, keepdim=True)
+            syno_video_features = syno_video_features / syno_video_features.norm(dim=-1, keepdim=True)
+
+            video_align_logits = self.align_temper * syno_video_features @ clip_video_features.transpose(-2, -1)
+
+            video_align_loss = torch.nn.functional.cross_entropy(
+                video_align_logits,
+                torch.arange(
+                    0,
+                    x.shape[0],
+                    device=x.device
+                ).repeat_interleave(self.num_synos)
+            )
+            loss += video_align_loss.mean() * self.align_weight
 
         if (stage == "train"):
             self.log(

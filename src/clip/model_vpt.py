@@ -560,9 +560,11 @@ class VisionTransformer(nn.Module):
         x, s = self.transformer(x, s)
 
         x = self.ln_post(x[..., 0, :])
+        s = self.ln_post(s)
 
         if self.proj is not None:
             x = x @ self.proj
+            s = s @ self.proj
 
         if (syno):
             return x, s
