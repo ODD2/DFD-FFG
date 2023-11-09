@@ -367,7 +367,7 @@ class VResidualAttentionBlock(nn.Module):
         ln = nn.LayerNorm(d_model)
         linear = nn.Linear(
             d_model,
-            d_model,
+            d_model
         )
 
         proj_std = (d_model ** -0.5) * ((2 * (self.block_index + 1)) ** -0.5)
@@ -410,11 +410,11 @@ class VResidualAttentionBlock(nn.Module):
         self.pop_attr()
         data = self.attention(
             self.ln_1(x),
-            self.ln_1(s + self.syno_mlp(s)),
+            self.ln_1(s),
         )
         x = x + data["out"]
         x = x + self.mlp(self.ln_2(x))
-        s = s + data["s_out"]
+        s = s + data["s_out"] + self.syno_mlp(data["s_out"])
         s = s + self.mlp(self.ln_2(s))
 
         self.set_attr(
