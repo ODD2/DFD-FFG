@@ -70,7 +70,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         label_weights: List[float] = [1, 1],
         store_attrs: List[str] = [],
         align_temper: float = 30,
-        align_weight: float = 1e-1
+        align_weight: float = 5e-1
 
     ):
         super().__init__()
@@ -177,7 +177,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         face_attn_attr: str = "k",
         syno_attn_attr: str = "s_q",
         ffg_temper: float = 30,
-        ffg_weight: float = 1e-1,
+        ffg_weight: float = 5e-1,
         ffg_layers: int = -1,
         # generic
         num_frames: int = 1,
