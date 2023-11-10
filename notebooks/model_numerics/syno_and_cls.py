@@ -30,7 +30,7 @@ if __name__ == "__main__":
     results = model.forward(torch.cat([image1, image2]))
     layer_attrs = results["layer_attrs"]
     for i, l_attr in enumerate(layer_attrs):
-        s_q = l_attr["s_q"].flatten(0, 2).flatten(-2)
+        s_q = l_attr["s_q"].flatten(0, 1).flatten(-2)
         q = l_attr["q"].flatten(0, 2).flatten(-2)[[0]]
         print(
             f"{i}:\n",
