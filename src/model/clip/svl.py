@@ -75,11 +75,11 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         label_weights: List[float] = [1, 1],
         store_attrs: List[str] = [],
         is_temporal_conv: bool = True,
-        mask_ratio: float = 0.3,
+        mask_ratio: float = 0.0,
 
         # alignment
         is_aligned: bool = True,
-        align_temper: float = 5,
+        align_temper: float = 20,
         align_weight: float = 5e-1
     ):
         super().__init__()
@@ -200,13 +200,13 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
         store_attrs: List[str] = [],
-        mask_ratio: float = 0.3,
+        mask_ratio: float = 0.0,
         is_temporal_conv: bool = True,
 
 
         # alignment
         is_aligned: bool = True,
-        align_temper: float = 5,
+        align_temper: float = 20,
         align_weight: float = 5e-1
     ):
         self.num_face_parts = len(face_parts)
