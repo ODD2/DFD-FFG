@@ -229,7 +229,8 @@ class MultiheadAttentionAttrExtract(nn.Module):
         embed_dim,
         n_head,
         syno_temper=1,
-        attn_record=False
+        attn_record=False,
+        is_temporal_conv=True
     ):
         super().__init__()
 
@@ -240,14 +241,18 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self.n_head = n_head
         # syno's
         self.syno_temper = syno_temper
-        self.syno_temporal = nn.Conv1d(
-            embed_dim,
-            embed_dim,
-            kernel_size=3,
-            stride=1,
-            padding=1,
-            groups=self.n_head
-        )
+
+        if (is_temporal_conv):
+            self.syno_temporal = nn.Conv1d(
+                embed_dim,
+                embed_dim,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                groups=self.n_head
+            )
+        else:
+            self.syno_temporal = None
 
         # recordings
         self.attn_record = attn_record
@@ -255,7 +260,10 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self.s_aff = None
 
     def tuneable_modules(self):
-        return [self.syno_temporal]
+        if (not self.syno_temporal == None):
+            return [self.syno_temporal]
+        else:
+            return []
 
     def forward(
         self,
@@ -315,12 +323,14 @@ class MultiheadAttentionAttrExtract(nn.Module):
             v[:, :, 1:]
         )  # ignore cls embedding
 
-        s_mix = s_mix.permute(0, 2, 3, 4, 1).flatten(2, 3).flatten(0, 1)
-        # shape= (batch *  synos, head * width, frames)
-        s_mix = self.syno_temporal(s_mix) + s_mix
-        s_mix = s_mix.unflatten(1, (self.n_head, -1)).unflatten(0, (batch, -1))
-        s_mix = s_mix.permute(0, 4, 1, 2, 3)
-        # shape = (batch, frames, synos, head, width)
+        if not self.syno_temporal == None:
+            s_mix = s_mix.permute(0, 2, 3, 4, 1).flatten(2, 3).flatten(0, 1)
+            # shape= (batch *  synos, head * width, frames)
+            s_mix = self.syno_temporal(s_mix) + s_mix
+            s_mix = s_mix.unflatten(1, (self.n_head, -1)).unflatten(0, (batch, -1))
+            s_mix = s_mix.permute(0, 4, 1, 2, 3)
+            # shape = (batch, frames, synos, head, width)
+
         s_mix = s_mix.mean(dim=1)
 
         s_out = self.out_proj(s_mix.flatten(-2))
@@ -354,13 +364,15 @@ class VResidualAttentionBlock(nn.Module):
         num_synos: int,
         attn_record: bool = False,
         store_attrs: List[str] = [],
+        is_temporal_conv: bool = True,
     ):
         super().__init__()
         # modified
         self.attn = MultiheadAttentionAttrExtract(
             d_model,
             n_head,
-            attn_record=attn_record
+            attn_record=attn_record,
+            is_temporal_conv=is_temporal_conv
         )
 
         self.block_index = block_index
@@ -451,7 +463,8 @@ class VTransformer(nn.Module):
         num_frames: int,
         num_synos: int,
         attn_record: bool = False,
-        store_attrs: List[str] = []
+        store_attrs: List[str] = [],
+        is_temporal_conv=True
     ):
         super().__init__()
         self.width = width
@@ -466,7 +479,8 @@ class VTransformer(nn.Module):
                 num_frames=num_frames,
                 num_synos=num_synos,
                 attn_record=attn_record,
-                store_attrs=store_attrs
+                store_attrs=store_attrs,
+                is_temporal_conv=is_temporal_conv
             )
             for i in range(layers)
         ])
@@ -500,7 +514,8 @@ class VisionTransformer(nn.Module):
         num_frames: int,
         num_synos: int = 1,
         attn_record: bool = False,
-        store_attrs: List[str] = []
+        store_attrs: List[str] = [],
+        is_temporal_conv=True
     ):
         super().__init__()
         self.input_resolution = input_resolution
@@ -508,8 +523,13 @@ class VisionTransformer(nn.Module):
         self.patch_num = (input_resolution // patch_size) ** 2
         self.output_dim = output_dim
 
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=width,
-                               kernel_size=patch_size, stride=patch_size, bias=False)
+        self.conv1 = nn.Conv2d(
+            in_channels=3,
+            out_channels=width,
+            kernel_size=patch_size,
+            stride=patch_size,
+            bias=False
+        )
 
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
@@ -525,7 +545,8 @@ class VisionTransformer(nn.Module):
             num_synos=num_synos,
             # generic
             attn_record=attn_record,
-            store_attrs=store_attrs
+            store_attrs=store_attrs,
+            is_temporal_conv=is_temporal_conv
         )
 
         self.ln_post = LayerNorm(width)

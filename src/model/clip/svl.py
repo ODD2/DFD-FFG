@@ -69,9 +69,12 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
         store_attrs: List[str] = [],
+        is_temporal_conv: bool = True,
+
+        # alignment
+        is_aligned: bool = True,
         align_temper: float = 30,
         align_weight: float = 5e-1
-
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -82,11 +85,13 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             pretrain=pretrain,
             num_frames=num_frames,
             num_synos=num_synos,
-            store_attrs=store_attrs
+            store_attrs=store_attrs,
+            is_temporal_conv=is_temporal_conv
         )
         self.model = BinaryLinearClassifier(**params)
 
         self.num_synos = num_synos
+        self.is_aligned = is_aligned
         self.align_temper = align_temper
         self.align_weight = align_weight
         self.label_weights = torch.tensor(label_weights)
@@ -123,6 +128,13 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         loss = cls_loss.mean()
 
         if (stage == "train"):
+            self.log(
+                f"{stage}/{dts_name}/loss",
+                cls_loss.mean(),
+                batch_size=logits.shape[0]
+            )
+
+        if (stage == "train" and self.is_aligned):
             clip_video_features = output["embeds"].mean(dim=1)
             syno_video_features = output["synos"].mean(dim=1)
 
@@ -145,13 +157,6 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
                 batch_size=logits.shape[0]
             )
             loss += video_align_loss.mean() * self.align_weight
-
-        if (stage == "train"):
-            self.log(
-                f"{stage}/{dts_name}/loss",
-                cls_loss.mean(),
-                batch_size=logits.shape[0]
-            )
 
         return {
             "logits": logits,
@@ -179,6 +184,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         ffg_temper: float = 30,
         ffg_weight: float = 5e-1,
         ffg_layers: int = -1,
+
         # generic
         num_frames: int = 1,
         architecture: str = 'ViT-B/16',
@@ -186,7 +192,13 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         attn_record: bool = False,
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
-        store_attrs: List[str] = []
+        store_attrs: List[str] = [],
+        is_temporal_conv: bool = True,
+
+        # alignment
+        is_aligned: bool = True,
+        align_temper: float = 30,
+        align_weight: float = 5e-1
     ):
         self.num_face_parts = len(face_parts)
         self.face_attn_attr = face_attn_attr
@@ -202,8 +214,13 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             pretrain=pretrain,
             label_weights=label_weights,
             num_synos=self.num_face_parts,
-            store_attrs=set([*store_attrs, self.syno_attn_attr])
+            store_attrs=set([*store_attrs, self.syno_attn_attr]),
+            is_temporal_conv=is_temporal_conv,
+            is_aligned=is_aligned,
+            align_temper=align_temper,
+            align_weight=align_weight
         )
+
         self.save_hyperparameters()
 
         with open(face_feature_path, "rb") as f:

@@ -15,7 +15,8 @@ class VideoAttrExtractor(nn.Module):
         store_attrs=[],
         attn_record=False,
         pretrain=None,
-        frozen=False
+        frozen=False,
+        is_temporal_conv=True
     ):
         super().__init__()
         self.model, self.transform = CLIP.load(
@@ -24,7 +25,8 @@ class VideoAttrExtractor(nn.Module):
             num_frames=num_frames,
             store_attrs=store_attrs,
             attn_record=attn_record,
-            num_synos=num_synos
+            num_synos=num_synos,
+            is_temporal_conv=is_temporal_conv
         )
 
         self.model = self.model.visual.float()
