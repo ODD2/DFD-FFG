@@ -79,7 +79,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
 
         # alignment
         is_aligned: bool = True,
-        align_temper: float = 30,
+        align_temper: float = 5,
         align_weight: float = 5e-1
     ):
         super().__init__()
@@ -206,7 +206,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
 
         # alignment
         is_aligned: bool = True,
-        align_temper: float = 30,
+        align_temper: float = 5,
         align_weight: float = 5e-1
     ):
         self.num_face_parts = len(face_parts)
