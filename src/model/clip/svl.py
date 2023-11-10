@@ -28,14 +28,19 @@ class BinaryLinearClassifier(nn.Module):
 
         self.projs = nn.ModuleList(
             [
-                nn.Linear(
-                    self.encoder.embed_dim,
-                    2,
-                    bias=False
-                )
+                self.make_linear(self.encoder.embed_dim)
                 for _ in range(self.num_synos)
             ]
         )
+
+    def make_linear(embed_dim):
+        linear = nn.Linear(
+            embed_dim,
+            2,
+        )
+        linear.weight.data.zero_()
+        linear.bias.data.zero_()
+        return linear
 
     @property
     def transform(self):
