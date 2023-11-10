@@ -75,7 +75,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         label_weights: List[float] = [1, 1],
         store_attrs: List[str] = [],
         is_temporal_conv: bool = True,
-        mask_ratio: float = 0.0,
+        mask_ratio: float = 0.3,
 
         # alignment
         is_aligned: bool = True,
@@ -200,7 +200,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
         store_attrs: List[str] = [],
-        mask_ratio: float = 0.0,
+        mask_ratio: float = 0.3,
         is_temporal_conv: bool = True,
 
 
