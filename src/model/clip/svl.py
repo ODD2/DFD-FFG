@@ -33,7 +33,7 @@ class BinaryLinearClassifier(nn.Module):
             ]
         )
 
-    def make_linear(embed_dim):
+    def make_linear(self, embed_dim):
         linear = nn.Linear(
             embed_dim,
             2,
