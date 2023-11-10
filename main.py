@@ -49,7 +49,7 @@ def cli_main():
 
     # monitor model gradient and parameter histograms
     # (this severely slow down the training speed)
-    cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False, log_freq=10)
+    # cli.trainer.logger.experiment.watch(cli.model, log='all', log_graph=False)
 
     # load & configure datasets
     cli.datamodule.affine_model(cli.model)
@@ -64,7 +64,7 @@ def cli_main():
 
     # after training:
     # 1. unwatch model
-    cli.trainer.logger.experiment.unwatch(cli.model)
+    # cli.trainer.logger.experiment.unwatch(cli.model)
     # 2. save the config
     cli.trainer.logger.experiment.save(
         glob_str=os.path.join(cli.trainer.log_dir, 'setting.yaml'),
