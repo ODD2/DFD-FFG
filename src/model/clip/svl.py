@@ -38,8 +38,8 @@ class BinaryLinearClassifier(nn.Module):
             embed_dim,
             2,
         )
-        linear.weight.data.zero_()
-        linear.bias.data.zero_()
+        nn.init.normal_(linear.weight, std=0.001)
+        nn.init.normal_(linear.bias, std=0.001)
         return linear
 
     @property

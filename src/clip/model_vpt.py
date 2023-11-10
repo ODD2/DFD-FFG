@@ -243,7 +243,10 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self.syno_temper = syno_temper
 
         if (is_temporal_conv):
-            self.syno_temporal = self.create_syno_temporal(embed_dim)
+            self.syno_temporal = self.create_syno_temporal(
+                embed_dim,
+                self.n_head
+            )
         else:
             self.syno_temporal = None
 
@@ -258,18 +261,18 @@ class MultiheadAttentionAttrExtract(nn.Module):
         else:
             return []
 
-    def create_syno_temporal(self, embed_dim):
+    def create_syno_temporal(self, embed_dim, heads):
         conv_1d = nn.Conv1d(
             embed_dim,
             embed_dim,
             kernel_size=3,
             stride=1,
             padding=1,
-            groups=embed_dim
+            groups=heads,
+            bias=False
         )
 
-        conv_1d.weight.data.zero_()
-        conv_1d.bias.data.zero_()
+        nn.init.normal_(conv_1d.weight, std=0.001)
 
         return conv_1d
 
@@ -418,11 +421,11 @@ class VResidualAttentionBlock(nn.Module):
         ln = nn.LayerNorm(d_model)
         linear = nn.Linear(
             d_model,
-            d_model
+            d_model,
+            bias=False
         )
 
-        linear.weight.data.zero_()
-        linear.bias.data.zero_()
+        nn.init.normal_(linear.weight, std=0.001)
         return [ln, linear]
 
     def tuneable_modules(self):
@@ -463,11 +466,9 @@ class VResidualAttentionBlock(nn.Module):
         patch_mask: torch.Tensor = 0
     ):
         self.pop_attr()
-        s = s + self.syno_mlp(s)
-
         data = self.attention(
             self.ln_1(x),
-            self.ln_1(s),
+            self.ln_1(s + self.syno_mlp(s)),
             self.ln_te(te),
             patch_mask
         )
@@ -594,6 +595,7 @@ class VisionTransformer(nn.Module):
         self.num_synos = num_synos
         self.syno_embedding = nn.Parameter(torch.zeros(num_synos, width))
         self.temporal_embedding = nn.Parameter(torch.zeros(num_frames, width))
+        nn.init.normal_(self.temporal_embedding, std=0.001)
 
     def forward(
         self,
