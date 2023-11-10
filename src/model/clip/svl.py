@@ -6,7 +6,7 @@ import torch.nn as nn
 from typing import List
 
 from src.clip import clip as CLIP
-from src.clip.model_vpt import LayerNorm
+from clip.model_syno import LayerNorm
 from src.model.base import ODBinaryMetricClassifier
 from src.model.clip import VideoAttrExtractor
 

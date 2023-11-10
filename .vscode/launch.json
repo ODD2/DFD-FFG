@@ -8,7 +8,8 @@
             "name": "Python: Arbitrary",
             "type": "python",
             "request": "launch",
-            "module": "notebooks.text_prompt.gender_alignment",
+            // "module": "notebooks.text_prompt.gender_alignment",
+            "module": "notebooks.ffg_similarity.syno_and_cls",
             "justMyCode": true
         },
         {
@@ -27,11 +28,11 @@
             "justMyCode": false,
             "args": [
                 "--config",
-                "configs/generic/base.yaml",
+                "configs/version/Share/model_v2/base.yaml",
                 "--trainer.precision=16",
                 // ######### LMVL #########
                 "--config",
-                "configs/version/1031/clip/L14/ftfe/lmvl.yaml",
+                "configs/version/Share/model_v2/clip/L14/ffg.yaml",
                 // "--config",
                 // "configs/generic/model/clip/ftfe/amg.yaml",
                 // "--model.init_args.architecture=ViT-B/14",
@@ -46,7 +47,8 @@
                 // #########################
                 "--config",
                 "configs/generic/test.yaml",
-                "--trainer.strategy=ddp",
+                "--trainer.devices=1",
+                "--data.init_args.train_datamodules.init_args.batch_size=5",
             ]
         },
         {

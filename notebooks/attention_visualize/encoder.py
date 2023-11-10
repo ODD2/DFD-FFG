@@ -2,21 +2,23 @@
 import gc
 import cv2
 import time
+import math
 import torch
 import random
 import numpy as np
 import matplotlib.pyplot as plt
 
 from notebooks.tools import load_model
-from src.model.clip.ftfe import LinearMeanVideoLearner
+from src.model.clip.svl import SynoVideoLearner, FFGSynoVideoLearner
 
 DEVICE = "cuda"
 
 
 # %%
 from src.dataset.ffpp import FFPP, FFPPAugmentation, FFPPSampleStrategy
+from src.dataset.fsh import FSh
 
-sample_model = LinearMeanVideoLearner()
+sample_model = SynoVideoLearner()
 
 dataset = FFPP(
     df_types=["NT"],
@@ -27,7 +29,7 @@ dataset = FFPP(
     force_random_speed=False,
     vid_ext=".avi",
     data_dir="datasets/ffpp/",
-    num_frames=1,
+    num_frames=10,
     clip_duration=4,
     split="train",
     transform=sample_model.transform,
@@ -35,89 +37,96 @@ dataset = FFPP(
     ratio=1.0
 )
 
+# dataset = FSh(
+#     ["c23"],
+#     vid_ext=".avi",
+#     data_dir="datasets/ffpp/",
+#     num_frames=10,
+#     clip_duration=4,
+#     split="test",
+#     transform=sample_model.transform,
+#     pack=False,
+#     ratio=1.0
+# )
+
+
+def abbrev(value):
+    return round(value, 2)
 
 # %%
+
+
 def interpret(
     clips,
     model,
     query_idx=0,
-    target_layer=0,
-    logit_index=0,
+    logit_index=1,
     mode="all",
-    reverse=False
+    num_layers=-1,
 ):
     # For now, enforce frame level estimation
-    assert clips.shape[1] == 1
     model.zero_grad()
-    num_patch = model.encoder.n_patch
-    num_queries = 1
-    num_tokens = num_patch**2
+    num_patch = model.encoder.model.patch_num
+    num_patch_per_side = int(math.sqrt(num_patch))
     image_attn_blocks = list(
         dict(model.encoder.model.transformer.resblocks.named_children()).values()
     )
 
     logits = model(clips)["logits"]
-    model.zero_grad()
     indicator = logits[:, logit_index].sum(dim=0)
-    aff = image_attn_blocks[target_layer].attn.aff
-    grad = torch.autograd.grad(
-        indicator,
-        [aff],
-        retain_graph=True
-    )[0].detach().cpu()
 
-    aff = aff.detach().cpu()
-    cam = aff.detach().cpu()
+    overall_relevance = 0
 
-    if (mode == "grad"):
-        val = grad
-    elif (mode == "cam"):
-        val = cam
-    elif (mode == "all"):
-        val = grad * cam
+    if (num_layers == -1):
+        beg_layer = 0
+        end_layer = len(image_attn_blocks)
+    elif (num_layers > 0):
+        end_layer = len(image_attn_blocks)
+        beg_layer = end_layer - num_layers
     else:
         raise NotImplementedError()
 
-    # reshape to restore (n,h,p^2+1,p^2+1)
-    # cam = cam.reshape(1, -1, cam.shape[-1], cam.shape[-1])
-    val = val.permute((0, 3, 1, 2))
+    for target_layer in range(beg_layer, end_layer):
+        model.zero_grad()
+        aff = image_attn_blocks[target_layer].attn.s_aff
+        # aff.shape = [b,t,synos,patches,head]
+        grad = torch.autograd.grad(
+            indicator,
+            [aff],
+            retain_graph=True
+        )[0].detach().cpu()
 
-    # average over each heads.
-    val = val.clamp(min=0).mean(dim=1)
+        aff = aff.detach().cpu()
+        # aff.shape = [b,t,synos,patches,head]
+        cam = aff.detach().cpu()
+        # cam.shape = [b,t,synos,patches,head]
+        if (mode == "grad"):
+            val = grad
+        elif (mode == "cam"):
+            val = cam
+        elif (mode == "all"):
+            val = grad * cam
+        else:
+            raise NotImplementedError()
 
-    if reverse:
-        val = val.transpose(1, 2)
-        aff = aff.transpose(1, 2)
+        # reshape to restore (n,h,p^2+1,p^2+1)
+        val = val.permute((4, 0, 1, 2, 3))
 
-    # fetch the specified query
-    relevance = val[:, query_idx, 1:1 + num_tokens].mean(dim=0)
+        # average over each heads.
+        val = val.clamp(min=0).mean(dim=0)
 
-    # reshape to match the original patch geometry
-    relevance = relevance.view(
-        (num_queries, 1, num_patch, num_patch)
-    )
+        # fetch the specified query
+        relevance = val[:, :, [query_idx]].mean(dim=0)
 
-    indicator.backward()
-    model.zero_grad()
+        # reshape to match the original patch geometry
+        relevance = relevance.unflatten(-1, (num_patch_per_side, num_patch_per_side))
 
-    head_prob = aff[:, [query_idx], :1 + num_tokens].sum(dim=2).flatten(0, 1).mean(0)
+        model.zero_grad()
 
-    def abbrev(value):
-        return round(value, 2)
-
-    prob_avg = abbrev(torch.mean(head_prob, dim=0).flatten().item())
-    prob_var = abbrev(torch.var(head_prob, dim=0).flatten().item())
-    prob_max = abbrev(torch.max(head_prob, dim=0)[0].flatten().item())
-    prob_min = abbrev(torch.min(head_prob, dim=0)[0].flatten().item())
+        overall_relevance += (relevance / num_layers)
 
     return dict(
-        relevance=relevance,
-        prob_dist=dict(
-            avg=prob_avg,
-            var=prob_var,
-            max=prob_max,
-            min=prob_min
-        )
+        relevance=overall_relevance
     )
 
 
@@ -152,8 +161,9 @@ def draw_flatten_heatmap(relevance: torch.Tensor, scale=500):
 # %%
 # interpret prediction
 UNIT = 2
-MAX_LAYER = 12
-NUM_SAMPLES = 40
+FRAMES = 10
+NUM_SAMPLES = 12
+NUM_LAYERS = 24
 
 # sample videos
 random.seed(1019)
@@ -169,18 +179,39 @@ clips = torch.cat(
 ).to(DEVICE)
 
 model_configs = [
-    (668, LinearMeanVideoLearner, "logs/DFD-FFG/7xlxi0g4/checkpoints/epoch=19-step=4260.ckpt"),
-    (673, LinearMeanVideoLearner, "logs/DFD-FFG/4j3llo6x/checkpoints/epoch=19-step=4260.ckpt"),
-    (684, LinearMeanVideoLearner, "logs/DFD-FFG/gfy5j5wf/checkpoints/epoch=49-step=10650.ckpt")
+    # ("none", SynoVideoLearner, "logs/DFD-FFG/kjfr7es5/checkpoints/epoch=8-step=535.ckpt"),
+    # ("lips", FFGSynoVideoLearner, "logs/DFD-FFG/6vtmspln/checkpoints/epoch=5-step=377.ckpt"),
+    # (797, FFGSynoVideoLearner, "logs/DFD-FFG/y5fgtrnm/checkpoints/epoch=4-step=314.ckpt")
+    # ("skin", FFGSynoVideoLearner, "logs/DFD-FFG/rad4hm3u/checkpoints/epoch=6-step=440.ckpt")
+    # (684, LinearMeanVideoLearner, "logs/DFD-FFG/gfy5j5wf/checkpoints/epoch=49-step=10650.ckpt")
+    # ("hd9twd8v", FFGSynoVideoLearner, "logs/DFD-FFG/hd9twd8v/checkpoints/epoch=9-step=598.ckpt"),
+    # ("g5m75moo", FFGSynoVideoLearner, "logs/DFD-FFG/g5m75moo/checkpoints/epoch=5-step=346.ckpt"),
+    # ("dxcryj5v", FFGSynoVideoLearner, "logs/DFD-FFG/dxcryj5v/checkpoints/last.ckpt"),
+    # ("ydgdslgl", FFGSynoVideoLearner, "logs/DFD-FFG/ydgdslgl/checkpoints/epoch=9-step=629.ckpt"),
+    # ("hhipjbbh", FFGSynoVideoLearner, "logs/DFD-FFG/hhipjbbh/checkpoints/last.ckpt"),
+    # ("3fek0hoo", FFGSynoVideoLearner, "logs/DFD-FFG/3fek0hoo/checkpoints/last.ckpt"),
+    # ("zqo6ijqq", FFGSynoVideoLearner, "logs/DFD-FFG/zqo6ijqq/checkpoints/last.ckpt"),
+    # ("z94z887d", FFGSynoVideoLearner, "logs/DFD-FFG/z94z887d/checkpoints/last.ckpt"),
+    # ("o9jcrwr6", FFGSynoVideoLearner, "logs/DFD-FFG/o9jcrwr6/checkpoints/last.ckpt")
+    # ("26txmw8y", FFGSynoVideoLearner, "logs/DFD-FFG/26txmw8y/checkpoints/last.ckpt"),
+    # ("248erwy6", FFGSynoVideoLearner, "logs/DFD-FFG/248erwy6/checkpoints/last.ckpt"),
+    # ("p5tdrroa", FFGSynoVideoLearner, "logs/DFD-FFG/p5tdrroa/checkpoints/last.ckpt"),
+    # ("xwnug1t1", FFGSynoVideoLearner, "logs/DFD-FFG/xwnug1t1/checkpoints/last.ckpt"),
+    # ("cnex8ypf", FFGSynoVideoLearner, "logs/DFD-FFG/cnex8ypf/checkpoints/last.ckpt"),
+    ("cnex8ypf", FFGSynoVideoLearner, "logs/DFD-FFG/stnn1s5y/checkpoints/last.ckpt"),
+    ("2avus0qv", FFGSynoVideoLearner, "logs/DFD-FFG/2avus0qv/checkpoints/last.ckpt"),
+    ("rkw6q4zw", FFGSynoVideoLearner, "logs/DFD-FFG/rkw6q4zw/checkpoints/last.ckpt")
 ]
 
 scenarios = [
     (
-        False,  # rev
-        prompt,
-        800
+        syno,
+        50000,
+        1,
+        "all",
+        18,
     )
-    for prompt in [0]
+    for syno in [0, 1, 2, 3]
 ]
 
 
@@ -189,58 +220,35 @@ def runner(model_config, scenario):
     model = load_model(model_cls, model_path).model
     model.to(DEVICE)
     model.eval()
-    model_images = []
-    rev, prompt, scale = scenario
+    syno, scale, logit_index, mode, num_layers = scenario
 
-    for layer in range(MAX_LAYER):
-        results = interpret(
-            clips,
-            model,
-            query_idx=prompt,
-            target_layer=layer,
-            reverse=rev
-        )
-
-        relevance = results["relevance"]
-
-        flatten_heatmap = draw_flatten_heatmap(
-            relevance,
-            scale=scale
-        )
-        model_images.append(dict(
-            flatten_heatmap=flatten_heatmap,
-            prob_dist=results["prob_dist"]
-        ))
-
-    title = "model={}/layer={}/rev={}/scale={}/prompt={}".format(
-        model_name,
-        int(MAX_LAYER),
-        int(rev),
-        scale,
-        int(prompt)
+    results = interpret(
+        clips,
+        model,
+        query_idx=syno,
+        logit_index=logit_index,
+        mode=mode,
+        num_layers=num_layers
     )
+
+    flatten_heatmap = draw_flatten_heatmap(
+        results["relevance"],
+        scale=scale
+    )
+
+    title = "model={}/scale={}/syno={}/logit={}".format(
+        model_name,
+        scale,
+        int(syno),
+        int(logit_index)
+    )
+
     return dict(
         title=title,
-        img=np.concatenate(
-            [
-                i["flatten_heatmap"]
-                for i in model_images
-            ],
-            axis=1
-        ),
-        prob_infos=[
-            "avg={}\nvar={}\nmin={}\nmax={}".format(
-                i["prob_dist"]["avg"],
-                i["prob_dist"]["var"],
-                i["prob_dist"]["min"],
-                i["prob_dist"]["max"],
-            )
-            for i in model_images
-        ]
+        img=flatten_heatmap
     )
 
 
-plt.ioff()
 timestr = time.strftime("%H%M%S")
 for s_idx, scenario in enumerate(scenarios):
     scenario_images = []
@@ -250,8 +258,8 @@ for s_idx, scenario in enumerate(scenarios):
         gc.collect()
         torch.cuda.empty_cache()
 
-    rows = len(model_configs)
-    cols = MAX_LAYER
+    rows = len(scenario_images)
+    cols = NUM_LAYERS
 
     plt.figure(
         figsize=(UNIT * cols, UNIT * rows),
@@ -263,22 +271,5 @@ for s_idx, scenario in enumerate(scenarios):
         plt.imshow(model_results["img"], vmax=255, vmin=0)
         plt.gca().axis("off")
     plt.savefig(f"./misc/extern/{timestr}-{s_idx}.png")
-    ###############################################
-    plt.figure(
-        figsize=(UNIT * cols, UNIT * rows),
-        layout="constrained"
-    )
-    for i, model_results in enumerate(scenario_images):
-        for j, prob_info in enumerate(model_results["prob_infos"]):
-            plt.subplot(
-                rows,
-                cols,
-                i * cols + j + 1
-            )
-            plt.text(0.5, 0.5, prob_info)
-            plt.gca().axis("off")
-    plt.savefig(f"./misc/extern/{timestr}-{s_idx}(probs).png")
-    plt.show()
-
 
 # %%

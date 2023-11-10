@@ -13,72 +13,75 @@ import torchvision.transforms as T
 
 from tqdm import tqdm
 from notebooks.tools import extract_features
-from src.model.clip import FrameAttrExtractor
-from src.clip.model_vpt import PromptMode
+from src.model.clip import VideoAttrExtractor
 from src.dataset.ffpp import FFPP, FFPPSampleStrategy, FFPPAugmentation
 from notebooks.fetch_facial_feature import fetch_semantic_features
+# %%
 
 
-def var(x, patch_num, *args, **kargs):
+def var(x, n_patch, *args, **kargs):
     # shows the variance of the video patches over the temporal dimension.
     return (
         torch.var(x, dim=0)
         .mean(dim=-1)
-        .view((patch_num, patch_num))
+        .view((n_patch, n_patch))
         .unsqueeze(-1)
     )
 
 
-def max_stdev(x, patch_num, *args, **kargs):
+def max_stdev(x, n_patch, *args, **kargs):
     # shows the maximum stdev value of the video patches averaged over the temporal dimension.
     return (
         torch.max(
             torch.abs((x - torch.mean(x, dim=0)) / torch.sqrt(torch.var(x, dim=0))).mean(dim=-1),
             dim=0
         )[0]
-        .view(patch_num, patch_num)
+        .view(n_patch, n_patch)
         .unsqueeze(-1)
     )
 
 
-def one_patch_cos_sim(x, t, c, patch_num, *args, **kargs):
+def one_patch_cos_sim(x, t, c, n_patch, *args, **kargs):
     # shows the video patch similarities given a patch location
     return (
         torch.nn.functional.cosine_similarity(x, x[t, c], dim=-1)
-        .view((-1, patch_num, patch_num))
+        .view((-1, n_patch, n_patch))
         .permute(1, 0, 2)
         .flatten(1, 2)
         .unsqueeze(-1)
     )
 
 
-def semantic_patch_cos_sim(x, patch_num, part, _s, _l, semantic_patches, s=None, *args, **kargs):
+def semantic_patch_cos_sim(x, n_patch, part, _s, _l, semantic_patches, s=None, *args, **kargs):
     # shows the video patch similarities given a semantic patch
     # _l -> the layer of the feature x
     # s -> the mandatory subject, overwrites _s
     # _s -> the subject of the feature x
-    return (
+    feat = (
         (
             (
-                torch.nn.functional.cosine_similarity(
-                    x,
-                    semantic_patches[_s if s == None else s][part][_l],
-                    dim=-1
-                ) / 2 + 0.5
-            )
-            .view((-1, patch_num, patch_num))
+                (
+                    torch.nn.functional.cosine_similarity(
+                        x,
+                        semantic_patches[_s if s == None else s][part][_l],
+                        dim=-1
+                    ) / 2 + 0.5
+                ) * 30
+            ).softmax(dim=-1)
+            .view((-1, n_patch, n_patch))
             .permute(1, 0, 2)
             .flatten(1, 2)
             .unsqueeze(-1)
         )
     )
+    feat = (feat - feat.min()) / (feat.max() - feat.min())
+    return feat
 
 
 def plotter(
     features,
     title="",
     mode="subject-layer",
-    num_layers=16,
     unit_size=3,
     font_size=12,
     plot_params={}
@@ -123,11 +126,11 @@ def plotter(
         raise NotImplementedError()
 
 
-def driver(features, method, subjects=None, patch_num=14, **kargs):
+def driver(features, method, subjects=None, n_patch=14, **kargs):
     if subjects == None:
         subjects = list(features[0].keys())
-
-    assert features[0][subjects[0]].shape[1] == patch_num**2
+    assert features[0][subjects[0]].shape[1] == 1
+    assert features[0][subjects[0]].shape[2] == n_patch**2
 
     r = {
         k: [] for k in subjects
@@ -136,25 +139,25 @@ def driver(features, method, subjects=None, patch_num=14, **kargs):
     for l in range(num_layers):
         for s in subjects:
             # variance
-            r[s].append(method(features[l][s], patch_num=patch_num, _l=l, _s=s, ** kargs).float())
+            r[s].append(method(features[l][s].flatten(0, 1), n_patch=n_patch, _l=l, _s=s, ** kargs).float())
 
     return r
 
 
+evals = driver(features, semantic_patch_cos_sim, part=part, s="q", semantic_patches=semantic_patches, n_patch=n_patch)
+plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
+
 # %%
 
-encoder = FrameAttrExtractor(
+encoder = VideoAttrExtractor(
     architecture="ViT-L/14",
-    prompt_dropout=0,
-    prompt_layers=0,
-    prompt_mode=PromptMode.NONE,
-    prompt_num=0,
-    text_embed=False
+    text_embed=False,
+    store_attrs=["q", "k", "v", "out", "emb"]
 )
 encoder.eval()
 encoder.to("cuda")
 
-patch_num = encoder.n_patch
+n_patch = encoder.n_patch
 n_px = encoder.n_px
 dataset = FFPP(
     df_types=["REAL", "DF", "FS", "F2F", "NT"],
@@ -171,9 +174,13 @@ dataset = FFPP(
     pack=False,
     transform=encoder.transform
 )
+# %%
 random.seed(1019)
-clip = dataset[random.randint(0, len(dataset))][0]
-features = extract_features(encoder, clip[0][0])
+clip = dataset[random.randint(0, len(dataset))][0][0][0]
+print(clip[0][0].shape)
+# clip[:, :, 136:196, 72:152] = 0
+# %%
+features = extract_features(encoder, clip)
 
 # evals = driver(features, var)
 # plotter(evals, "", "subject-layer", unit_size=2)
@@ -181,27 +188,35 @@ features = extract_features(encoder, clip[0][0])
 # evals = driver(features, one_patch_cos_sim, t=0, c=21)
 # plotter(evals, "", "layer-frame", unit_size=2)
 
-semantic_patches = fetch_semantic_features(
-    encoder, 
-    df_types=["REAL"], 
-    sample_num=100,
-    centroid_mode=True
-)
+# %%
+# semantic_patches = fetch_semantic_features(
+#     encoder,
+#     df_types=["REAL"],
+#     sample_num=1000
+# )
+with open("misc/L14_real_semantic_patches_v2_2000.pickle", "rb") as f:
+    semantic_patches = pickle.load(f)
+
 
 # %%
 plot_params = dict(vmin=0, vmax=1)
-part = "skin"
+part = "lips"
 # %%
-evals = driver(features, semantic_patch_cos_sim, part=part, s="q", semantic_patches=semantic_patches,patch_num=16)
+print(features[0]["q"].shape)
+# %%
+evals = driver(features, semantic_patch_cos_sim, part=part, s="q", semantic_patches=semantic_patches, n_patch=n_patch)
 plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
 
-evals = driver(features, semantic_patch_cos_sim, part=part, s="k", semantic_patches=semantic_patches,patch_num=16)
+evals = driver(features, semantic_patch_cos_sim, part=part, s="k", semantic_patches=semantic_patches, n_patch=n_patch)
 plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
 
-evals = driver(features, semantic_patch_cos_sim, part=part, s="v", semantic_patches=semantic_patches,patch_num=16)
+evals = driver(features, semantic_patch_cos_sim, part=part, s="v", semantic_patches=semantic_patches, n_patch=n_patch)
 plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
 
-evals = driver(features, semantic_patch_cos_sim, part=part, s="out", semantic_patches=semantic_patches,patch_num=16)
+evals = driver(features, semantic_patch_cos_sim, part=part, s="out", semantic_patches=semantic_patches, n_patch=n_patch)
 plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
 
- # %%
+evals = driver(features, semantic_patch_cos_sim, part=part, s="emb", semantic_patches=semantic_patches, n_patch=n_patch)
+plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
+
+# %%
