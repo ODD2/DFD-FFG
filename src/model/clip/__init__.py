@@ -16,6 +16,7 @@ class VideoAttrExtractor(nn.Module):
         attn_record=False,
         pretrain=None,
         frozen=False,
+        mask_ratio=0.0,
         is_temporal_conv=True
     ):
         super().__init__()
@@ -28,7 +29,7 @@ class VideoAttrExtractor(nn.Module):
             num_synos=num_synos,
             is_temporal_conv=is_temporal_conv
         )
-
+        self.mask_ratio = mask_ratio
         self.model = self.model.visual.float()
         self.model.post_init_tuneables()
 
@@ -78,8 +79,17 @@ class VideoAttrExtractor(nn.Module):
 
     def forward(self, x):
         b, t = x.shape[:2]
+
+        # training augmentations
+        if self.training and self.mask_ratio > 0:
+            patch_mask = torch.rand(self.model.patch_num) < self.mask_ratio
+            patch_mask = patch_mask.to(dtype=float, device=x.device) * -1e3
+            patch_mask = patch_mask.unsqueeze(1)
+        else:
+            patch_mask = torch.tensor(0, device=x.device)
+
         # pass throught for attributes
-        embeds, synos = self.model(x, syno=True)
+        embeds, synos = self.model(x, syno=True, patch_mask=patch_mask)
         # retrieve all layer attributes
         layer_attrs = []
         for blk in self.model.transformer.resblocks:

@@ -268,7 +268,8 @@ class MultiheadAttentionAttrExtract(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        s: torch.Tensor
+        s: torch.Tensor,
+        patch_mask: torch.Tensor = 0
     ):
         # x.shape = (batch, frames, grid**2 + 1, width)
         # s.shape = (batch, synos, width)
@@ -315,6 +316,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
             k[:, :, 1:]
         )  # ignore cls embedding
 
+        s_aff += patch_mask
         s_aff = s_aff.softmax(dim=-2) * self.syno_temper
 
         s_mix = torch.einsum(
@@ -426,19 +428,22 @@ class VResidualAttentionBlock(nn.Module):
     def attention(
         self,
         x: torch.Tensor,
-        s: torch.Tensor
+        s: torch.Tensor,
+        patch_mask: torch.Tensor = 0
     ):
-        return self.attn(x, s)
+        return self.attn(x, s, patch_mask)
 
     def forward(
         self,
         x: torch.Tensor,
-        s: torch.Tensor
+        s: torch.Tensor,
+        patch_mask: torch.Tensor = 0
     ):
         self.pop_attr()
         data = self.attention(
             self.ln_1(x),
             self.ln_1(s + self.syno_mlp(s)),
+            patch_mask
         )
         x = x + data["out"]
         x = x + self.mlp(self.ln_2(x))
@@ -495,9 +500,14 @@ class VTransformer(nn.Module):
         for blk in self.resblocks:
             blk.post_init_tuneables()
 
-    def forward(self, x: torch.Tensor, s: torch.Tensor):
+    def forward(
+        self,
+        x: torch.Tensor,
+        s: torch.Tensor,
+        patch_mask: torch.Tensor = 0
+    ):
         for blk in self.resblocks:
-            x, s = blk(x, s)
+            x, s = blk(x, s, patch_mask)
 
         return x, s
 
@@ -559,7 +569,8 @@ class VisionTransformer(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        syno: bool = False
+        syno: bool = False,
+        patch_mask: torch.Tensor = 0
     ):
         batch, frames = x.shape[:2]
         # x.shape = [batch,  frames, 3, px, px]
@@ -594,7 +605,7 @@ class VisionTransformer(nn.Module):
         # shape = [batch, synos, width]
         s = self.ln_pre(s)
 
-        x, s = self.transformer(x, s)
+        x, s = self.transformer(x, s, patch_mask)
 
         x = self.ln_post(x[..., 0, :])
         s = self.ln_post(s)
