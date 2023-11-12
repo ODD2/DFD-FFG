@@ -27,6 +27,7 @@ class FFPPAugmentation(IntFlag):
     DSCALE = auto()
     SHARPEN = auto()
     RRC = auto()
+    BLUR = auto()
 
 
 class FFPP(DeepFakeDataset):
@@ -154,7 +155,12 @@ class FFPP(DeepFakeDataset):
             elif FFPPAugmentation.DSCALE in self.augmentations:
                 self.video_augmentation = alb.ReplayCompose(
                     [
-                        RandomDownScale((2, 3), p=1)
+                        alb.RandomScale(
+                            (-0.6, -0.3), always_apply=True
+                        ),
+                        alb.Resize(
+                            self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
+                        )
                     ],
                     p=1.
                 )
@@ -169,8 +175,14 @@ class FFPP(DeepFakeDataset):
                 self.video_augmentation = alb.ReplayCompose(
                     [
                         alb.RandomResizedCrop(
-                            self.n_px, self.n_px, scale=(0.5, 0.75), ratio=(1, 1), p=0.5
+                            self.n_px, self.n_px, scale=(0.5, 0.75), ratio=(1, 1), p=1.0
                         )
+                    ]
+                )
+            elif FFPPAugmentation.BLUR in self.augmentations:
+                self.video_augmentation = alb.ReplayCompose(
+                    [
+                        alb.Blur(p=1.0)
                     ]
                 )
             else:
@@ -240,18 +252,21 @@ class FFPP(DeepFakeDataset):
                     alb.ImageCompression(
                         quality_lower=40, quality_upper=100, p=0.5
                     ),
-                    alb.HorizontalFlip()
+                    alb.HorizontalFlip(),
+                    alb.Blur(
+                        p=0.3
+                    )
                 ]
 
                 if FFPPAugmentation.VIDEO_RRC in self.augmentations:
                     augmentations += [
                         alb.RandomResizedCrop(
-                            self.n_px, self.n_px, scale=(0.7, 0.9), ratio=(1, 1), p=0.3
+                            self.n_px, self.n_px, scale=(0.5, 0.75), ratio=(1, 1), p=0.3
                         ),
                         alb.Compose(
                             [
                                 alb.RandomScale(
-                                    (-0.5, -0.1), always_apply=True
+                                    (-0.5, -0.25), always_apply=True
                                 ),
                                 alb.Resize(
                                     self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
@@ -279,7 +294,7 @@ class FFPP(DeepFakeDataset):
                         brightness_limit=(-0.05, 0.05), contrast_limit=(-0.05, 0.05), p=0.3
                     ),
                     alb.ImageCompression(
-                        quality_lower=80, quality_upper=100, p=0.5
+                        quality_lower=80, quality_upper=100, p=0.3
                     ),
                 ]
                 if FFPPAugmentation.FRAME_NOISE in self.augmentations:
