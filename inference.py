@@ -11,23 +11,30 @@ from os import path
 from tqdm import tqdm
 from datetime import datetime
 from lightning.pytorch.cli import LightningCLI
-from main import configure_logging
 from torchmetrics.classification import AUROC, Accuracy
 
 
-def parse_args():
+def configure_logging():
+    logging_fmt = "[%(levelname)s][%(filename)s:%(lineno)d]: %(message)s"
+    logging.basicConfig(level="INFO", format=logging_fmt)
+    warnings.filterwarnings(action="ignore")
+
+
+def parse_args(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("model_cfg_path", type=str)
     parser.add_argument("data_cfg_path", type=str)
     parser.add_argument("ckpt_path", type=str)
-    return parser.parse_args()
+    return parser.parse_args(args=args)
 
 
 N = 8
 
 
 @torch.inference_mode()
-def main(params):
+def main(args=None):
+    params = parse_args(args=args)
+
     configure_logging()
 
     with open(params.model_cfg_path) as f:
@@ -140,6 +147,8 @@ def main(params):
 
     # TODO: send notification after completing the inference.
 
+    return report
+
 
 if __name__ == "__main__":
-    main(parse_args())
+    main()

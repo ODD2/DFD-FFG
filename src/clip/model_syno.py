@@ -230,7 +230,8 @@ class MultiheadAttentionAttrExtract(nn.Module):
         n_head,
         syno_temper=1,
         attn_record=False,
-        is_temporal_conv=True
+        is_temporal_conv=True,
+        enable_syno=True
     ):
         super().__init__()
 
@@ -242,7 +243,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
         # syno's
         self.syno_temper = syno_temper
 
-        if (is_temporal_conv):
+        if (is_temporal_conv and enable_syno):
             self.syno_temporal = self.create_syno_temporal(
                 embed_dim,
                 self.n_head
@@ -256,7 +257,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self.s_aff = None
 
     def tuneable_modules(self):
-        if (not self.syno_temporal == None):
+        if (not self.syno_temporal is None):
             return [self.syno_temporal]
         else:
             return []
@@ -309,56 +310,64 @@ class MultiheadAttentionAttrExtract(nn.Module):
 
         out = self.out_proj(mix.flatten(-2))
 
-        # Additional Synoptic Cross-Attention
-        s_q, s_k, s_v = F.linear(
-            s,
-            self.in_proj_weight,
-            self.in_proj_bias
-        ).chunk(3, dim=-1)
+        if (not s is None):
+            # Additional Synoptic Cross-Attention
+            s_q, s_k, s_v = F.linear(
+                s,
+                self.in_proj_weight,
+                self.in_proj_bias
+            ).chunk(3, dim=-1)
 
-        view_as = (*s_q.shape[:2], self.n_head, -1)
+            view_as = (*s_q.shape[:2], self.n_head, -1)
 
-        s_q = s_q.view(*view_as)
-        s_k = s_k.view(*view_as)
-        s_v = s_v.view(*view_as)
+            s_q = s_q.view(*view_as)
+            s_k = s_k.view(*view_as)
+            s_v = s_v.view(*view_as)
 
-        te_q, te_k, te_v = F.linear(
-            te,
-            self.in_proj_weight,
-            self.in_proj_bias
-        ).chunk(3, dim=-1)
+            te_q, te_k, te_v = F.linear(
+                te,
+                self.in_proj_weight,
+                self.in_proj_bias
+            ).chunk(3, dim=-1)
 
-        view_as = (te.shape[0], 1, self.n_head, -1)
-        te_q = te_q.view(*view_as)
-        te_k = te_k.view(*view_as)
-        te_v = te_v.view(*view_as)
+            view_as = (te.shape[0], 1, self.n_head, -1)
+            te_q = te_q.view(*view_as)
+            te_k = te_k.view(*view_as)
+            te_v = te_v.view(*view_as)
 
-        s_aff = torch.einsum(
-            'nqhc,ntkhc->ntqkh',
-            s_q / (s_q.size(-1) ** 0.5),
-            k[:, :, 1:] + te_k
-        )  # ignore cls embedding
+            s_aff = torch.einsum(
+                'nqhc,ntkhc->ntqkh',
+                s_q / (s_q.size(-1) ** 0.5),
+                k[:, :, 1:] + te_k
+            )  # ignore cls embedding
 
-        s_aff += patch_mask
-        s_aff = s_aff.softmax(dim=-2) * self.syno_temper
+            s_aff += patch_mask
+            s_aff = s_aff.softmax(dim=-2) * self.syno_temper
 
-        s_mix = torch.einsum(
-            'ntqlh,ntlhc->ntqhc',
-            s_aff,
-            v[:, :, 1:] + te_v
-        )  # ignore cls embedding
+            s_mix = torch.einsum(
+                'ntqlh,ntlhc->ntqhc',
+                s_aff,
+                v[:, :, 1:] + te_v
+            )  # ignore cls embedding
 
-        if not self.syno_temporal == None:
-            s_mix = s_mix.permute(0, 2, 3, 4, 1).flatten(2, 3).flatten(0, 1)
-            # shape= (batch *  synos, head * width, frames)
-            s_mix = self.syno_temporal(s_mix) + s_mix
-            s_mix = s_mix.unflatten(1, (self.n_head, -1)).unflatten(0, (batch, -1))
-            s_mix = s_mix.permute(0, 4, 1, 2, 3)
-            # shape = (batch, frames, synos, head, width)
+            if not self.syno_temporal == None:
+                s_mix = s_mix.permute(0, 2, 3, 4, 1).flatten(2, 3).flatten(0, 1)
+                # shape= (batch *  synos, head * width, frames)
+                s_mix = self.syno_temporal(s_mix) + s_mix
+                s_mix = s_mix.unflatten(1, (self.n_head, -1)).unflatten(0, (batch, -1))
+                s_mix = s_mix.permute(0, 4, 1, 2, 3)
+                # shape = (batch, frames, synos, head, width)
 
-        s_mix = s_mix.mean(dim=1)
+            s_mix = s_mix.mean(dim=1)
 
-        s_out = self.out_proj(s_mix.flatten(-2))
+            s_out = self.out_proj(s_mix.flatten(-2))
+        else:
+            s_q = None
+            s_k = None
+            s_v = None
+            s_out = None
+            s_mix = None
+            s_aff = None
 
         # record attentions
         if self.attn_record:
@@ -390,6 +399,7 @@ class VResidualAttentionBlock(nn.Module):
         attn_record: bool = False,
         store_attrs: List[str] = [],
         is_temporal_conv: bool = True,
+        enable_syno: bool = True
     ):
         super().__init__()
         # modified
@@ -397,7 +407,8 @@ class VResidualAttentionBlock(nn.Module):
             d_model,
             n_head,
             attn_record=attn_record,
-            is_temporal_conv=is_temporal_conv
+            is_temporal_conv=is_temporal_conv,
+            enable_syno=enable_syno
         )
 
         self.block_index = block_index
@@ -411,8 +422,12 @@ class VResidualAttentionBlock(nn.Module):
         ]))
         self.ln_2 = LayerNorm(d_model)
 
-        self.syno_mlp = nn.Sequential(*self.make_syno_mlp(d_model=d_model))
-        self.ln_te = LayerNorm((num_frames, d_model))
+        if (enable_syno):
+            self.syno_mlp = nn.Sequential(*self.make_syno_mlp(d_model=d_model))
+            self.ln_te = LayerNorm((num_frames, d_model))
+        else:
+            self.syno_mlp = None
+            self.ln_te = None
 
         # preserve attrs
         self.attr = {}
@@ -429,7 +444,12 @@ class VResidualAttentionBlock(nn.Module):
         return [ln, linear]
 
     def tuneable_modules(self):
-        return self.attn.tuneable_modules() + [self.syno_mlp, self.ln_te]
+        modules = self.attn.tuneable_modules()
+        if (not self.syno_mlp is None):
+            modules.append(self.syno_mlp)
+        if (not self.ln_te is None):
+            modules.append(self.ln_te)
+        return modules
 
     def post_init_tuneables(self):
         pass
@@ -466,17 +486,27 @@ class VResidualAttentionBlock(nn.Module):
         patch_mask: torch.Tensor = 0
     ):
         self.pop_attr()
-        data = self.attention(
-            self.ln_1(x),
-            self.ln_1(s + self.syno_mlp(s)),
-            self.ln_te(te),
-            patch_mask
-        )
+        if (not s is None):
+            data = self.attention(
+                self.ln_1(x),
+                self.ln_1(s + self.syno_mlp(s)),
+                self.ln_te(te),
+                patch_mask
+            )
+        else:
+            data = self.attention(
+                self.ln_1(x),
+                None,
+                None,
+                0
+            )
 
         x = x + data["out"]
         x = x + self.mlp(self.ln_2(x))
-        s = s + data["s_out"]
-        s = s + self.mlp(self.ln_2(s))
+
+        if not s is None:
+            s = s + data["s_out"]
+            s = s + self.mlp(self.ln_2(s))
 
         self.set_attr(
             **data,
@@ -497,7 +527,8 @@ class VTransformer(nn.Module):
         num_synos: int,
         attn_record: bool = False,
         store_attrs: List[str] = [],
-        is_temporal_conv=True
+        is_temporal_conv=True,
+        enable_syno: bool = True
     ):
         super().__init__()
         self.width = width
@@ -513,7 +544,8 @@ class VTransformer(nn.Module):
                 num_synos=num_synos,
                 attn_record=attn_record,
                 store_attrs=store_attrs,
-                is_temporal_conv=is_temporal_conv
+                is_temporal_conv=is_temporal_conv,
+                enable_syno=enable_syno
             )
             for i in range(layers)
         ])
@@ -554,7 +586,8 @@ class VisionTransformer(nn.Module):
         num_synos: int = 1,
         attn_record: bool = False,
         store_attrs: List[str] = [],
-        is_temporal_conv=True
+        is_temporal_conv: bool = True,
+        enable_syno: bool = True
     ):
         super().__init__()
         self.input_resolution = input_resolution
@@ -585,17 +618,23 @@ class VisionTransformer(nn.Module):
             # generic
             attn_record=attn_record,
             store_attrs=store_attrs,
-            is_temporal_conv=is_temporal_conv
+            is_temporal_conv=is_temporal_conv,
+            enable_syno=enable_syno
         )
 
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
         # synoptic ability
-        self.num_synos = num_synos
-        self.syno_embedding = nn.Parameter(torch.zeros(num_synos, width))
-        self.temporal_embedding = nn.Parameter(torch.zeros(num_frames, width))
-        nn.init.normal_(self.temporal_embedding, std=0.001)
+        if (enable_syno):
+            self.num_synos = num_synos
+            self.syno_embedding = nn.Parameter(torch.zeros(num_synos, width))
+            self.temporal_embedding = nn.Parameter(torch.zeros(num_frames, width))
+            nn.init.normal_(self.temporal_embedding, std=0.001)
+        else:
+            self.syno_embedding = None
+            self.temporal_embedding = None
+            self.num_synos = 0
 
     def forward(
         self,
@@ -627,25 +666,33 @@ class VisionTransformer(nn.Module):
         x = x + self.positional_embedding.to(x.dtype)
         x = self.ln_pre(x)
 
-        s = (
-            self.syno_embedding
-            .to(x.dtype)
-            .unsqueeze(0)
-            .repeat(x.shape[0], 1, 1)
-        )
-        # shape = [batch, synos, width]
-        s = self.ln_pre(s)
+        if not self.syno_embedding is None:
+            s = (
+                self.syno_embedding
+                .to(x.dtype)
+                .unsqueeze(0)
+                .repeat(x.shape[0], 1, 1)
+            )
+            # shape = [batch, synos, width]
+            s = self.ln_pre(s)
 
-        te = self.temporal_embedding
+            te = self.temporal_embedding
+        else:
+            s = None
+            te = None
+            patch_mask = 0
 
         x, s = self.transformer(x, s, te, patch_mask)
 
         x = self.ln_post(x[..., 0, :])
-        s = self.ln_post(s)
+
+        if not self.syno_embedding is None:
+            s = self.ln_post(s)
 
         if self.proj is not None:
             x = x @ self.proj
-            s = s @ self.proj
+            if not self.syno_embedding is None:
+                s = s @ self.proj
 
         if (syno):
             return x, s
@@ -654,11 +701,15 @@ class VisionTransformer(nn.Module):
 
     def tuneable_modules(self):
         modules = self.transformer.tuneable_modules()
-        modules.extend([self.syno_embedding, self.temporal_embedding])
+        if (not self.syno_embedding is None):
+            modules.append(self.syno_embedding)
+        if (not self.temporal_embedding is None):
+            modules.append(self.temporal_embedding)
         return modules
 
     def post_init_tuneables(self):
-        self.syno_embedding.data = self.class_embedding.unsqueeze(0).repeat((self.num_synos, 1)).data
+        if (not self.syno_embedding is None):
+            self.syno_embedding.data = self.class_embedding.unsqueeze(0).repeat((self.num_synos, 1)).data
         self.transformer.post_init_tuneables()
 
 

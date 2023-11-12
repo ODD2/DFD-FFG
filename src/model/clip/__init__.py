@@ -17,7 +17,8 @@ class VideoAttrExtractor(nn.Module):
         pretrain=None,
         frozen=False,
         mask_ratio=0.0,
-        is_temporal_conv=True
+        is_temporal_conv=True,
+        enable_syno=True
     ):
         super().__init__()
         self.model, self.transform = CLIP.load(
@@ -27,7 +28,8 @@ class VideoAttrExtractor(nn.Module):
             store_attrs=store_attrs,
             attn_record=attn_record,
             num_synos=num_synos,
-            is_temporal_conv=is_temporal_conv
+            is_temporal_conv=is_temporal_conv,
+            enable_syno=enable_syno
         )
         self.mask_ratio = mask_ratio
         self.model = self.model.visual.float()

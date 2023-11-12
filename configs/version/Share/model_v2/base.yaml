@@ -102,3 +102,4 @@ lr_scheduler:
   last_epoch: -1
   verbose: false
 data: data.yaml
+infer_cfg: ""

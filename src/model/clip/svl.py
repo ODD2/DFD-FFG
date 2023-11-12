@@ -157,6 +157,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         ffg_temper: float = 30,
         ffg_weight: float = 5e-1,
         ffg_layers: int = -1,
+        ffg_reverse: bool = False,
 
         # generic
         num_frames: int = 1,
@@ -175,6 +176,8 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         self.ffg_temper = ffg_temper
         self.ffg_weight = ffg_weight
         self.ffg_layers = ffg_layers
+        self.ffg_reverse = ffg_reverse
+
         super().__init__(
             num_frames=num_frames,
             architecture=architecture,
@@ -241,12 +244,16 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             if self.ffg_layers == -1:
                 pass
             elif self.ffg_layers > 0:
-                layers = (
-                    self.model.encoder.model.transformer.layers -
-                    self.ffg_layers
-                )
-                face_features = face_features[layers:]
-                target_attn_attrs = target_attn_attrs[layers:]
+                if (self.ffg_reverse):
+                    face_features = face_features[: self.ffg_layers]
+                    target_attn_attrs = target_attn_attrs[: self.ffg_layers]
+                else:
+                    layers = (
+                        self.model.encoder.model.transformer.layers -
+                        self.ffg_layers
+                    )
+                    face_features = face_features[layers:]
+                    target_attn_attrs = target_attn_attrs[layers:]
             else:
                 raise NotImplementedError()
 
