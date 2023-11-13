@@ -269,7 +269,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
             kernel_size=3,
             stride=1,
             padding=1,
-            groups=heads,
+            groups=embed_dim,
             bias=False
         )
 
