@@ -9,7 +9,9 @@
             "type": "python",
             "request": "launch",
             // "module": "notebooks.text_prompt.gender_alignment",
-            "module": "notebooks.ffg_similarity.syno_and_cls",
+            // "module": "notebooks.ffg_similarity.syno_and_cls",
+            // "module": "notebooks.attention_visualize.encoder",
+            "module": "notebooks.kv_dist_visualize",
             "justMyCode": true
         },
         {
@@ -30,25 +32,12 @@
                 "--config",
                 "configs/version/Share/model_v2/base.yaml",
                 "--trainer.precision=16",
-                // ######### LMVL #########
                 "--config",
-                "configs/version/Share/model_v2/clip/L14/ffg.yaml",
-                // "--config",
-                // "configs/generic/model/clip/ftfe/amg.yaml",
-                // "--model.init_args.architecture=ViT-B/14",
-                // "--model.init_args.prompt_num=100",
-                // ######### SNVL #########
-                // "--config",
-                // "configs/generic/model/clip/L14/snvl.yaml",
-                // "--config",
-                // "configs/generic/model/clip/L14/ffg.yaml",
-                // "--config",
-                // "configs/generic/model/clip/L14/vpt.yaml",
-                // #########################
+                "configs/version/Share/model_v2/clip/B16/ffg.yaml",
                 "--config",
                 "configs/generic/test.yaml",
                 "--trainer.devices=1",
-                "--data.init_args.train_datamodules.init_args.batch_size=5",
+                "--data.init_args.train_datamodules.init_args.batch_size=4",
             ]
         },
         {
@@ -101,10 +90,17 @@
             "justMyCode": false
         },
         {
-            "name": "Python: CLIPNSVL",
+            "name": "Python: CLIPSVL",
             "type": "python",
             "request": "launch",
-            "module": "src.model.clip.nsvl",
+            "module": "src.model.clip.svl",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: CLIPBASE",
+            "type": "python",
+            "request": "launch",
+            "module": "src.model.clip.__init__",
             "justMyCode": false
         },
     ]
