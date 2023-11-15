@@ -423,16 +423,16 @@ class VResidualAttentionBlock(nn.Module):
         self.ln_2 = LayerNorm(d_model)
 
         if (enable_syno):
-            self.syno_mlp = nn.Sequential(*self.make_syno_mlp(d_model=d_model))
-            self.ln_te = LayerNorm((num_frames, d_model))
+            self.syno_mlp = nn.Sequential(*self.make_adaptor(d_model=d_model))
+            self.te_mlp = nn.Sequential(*self.make_adaptor(d_model=d_model))
         else:
             self.syno_mlp = None
-            self.ln_te = None
+            self.te_mlp = None
 
         # preserve attrs
         self.attr = {}
 
-    def make_syno_mlp(self, d_model):
+    def make_adaptor(self, d_model):
         ln = nn.LayerNorm(d_model)
         linear1 = nn.Linear(
             d_model,
@@ -453,8 +453,8 @@ class VResidualAttentionBlock(nn.Module):
         modules = self.attn.tuneable_modules()
         if (not self.syno_mlp is None):
             modules.append(self.syno_mlp)
-        if (not self.ln_te is None):
-            modules.append(self.ln_te)
+        if (not self.te_mlp is None):
+            modules.append(self.te_mlp)
         return modules
 
     def post_init_tuneables(self):
@@ -496,7 +496,7 @@ class VResidualAttentionBlock(nn.Module):
             data = self.attention(
                 self.ln_1(x),
                 self.ln_1(s + self.syno_mlp(s)),
-                self.ln_te(te),
+                (self.te_mlp(te) + te),
                 patch_mask
             )
         else:
