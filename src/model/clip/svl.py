@@ -7,38 +7,36 @@ from typing import List
 
 from src.model.base import ODBinaryMetricClassifier
 from src.model.clip import VideoAttrExtractor
+from src.utility.loss import focal_loss
 
 
 class BinaryLinearClassifier(nn.Module):
     def __init__(
         self,
-        num_synos,
         *args,
         **kargs,
     ):
-        self.num_synos = num_synos
         super().__init__()
         self.encoder = VideoAttrExtractor(
             *args,
-            **kargs,
-            num_synos=num_synos,
+            **kargs
         )
-
-        self.projs = nn.ModuleList(
-            [
-                self.make_linear(self.encoder.embed_dim)
-                for _ in range(self.num_synos)
-            ]
+        self.proj = nn.Linear(
+            self.encoder.embed_dim,
+            self.encoder.embed_dim // 8,
+            bias=False
         )
+        self.head = self.make_linear(self.encoder.embed_dim // 8)
 
     def make_linear(self, embed_dim):
         linear = nn.Linear(
             embed_dim,
-            2,
+            2
         )
-        nn.init.normal_(linear.weight, std=0.001)
-        nn.init.normal_(linear.bias, std=0.001)
-        return linear
+        return nn.Sequential(
+            nn.LayerNorm(embed_dim),
+            linear
+        )
 
     @property
     def transform(self):
@@ -51,11 +49,10 @@ class BinaryLinearClassifier(nn.Module):
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
         synos = results["synos"]
-        logits = sum([
-            self.projs[i](synos[:, i])
-            for i in range(self.num_synos)
-        ])
+        projs = self.proj(synos.mean(1))
+        logits = self.head(projs)
         return dict(
+            projs=projs,
             logits=logits,
             ** results
         )
@@ -68,17 +65,27 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         num_synos: int = 1,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
-        attn_record: bool = False,
         pretrain: str = None,
-        label_weights: List[float] = [1, 1],
+        layer_ratio: float = 1.0,
+
+        attn_record: bool = False,
+
         store_attrs: List[str] = [],
         is_temporal_conv: bool = True,
-        mask_ratio: float = 0.0
+        mask_ratio: float = 0.0,
+
+        cls_weight: float = 1.0,
+        label_weights: List[float] = [1, 1],
+
+        is_dssmed: bool = True,
+        dssm_weight: float = 1.0,
+
     ):
         super().__init__()
         self.save_hyperparameters()
         params = dict(
             architecture=architecture,
+            layer_ratio=layer_ratio,
             text_embed=text_embed,
             attn_record=attn_record,
             pretrain=pretrain,
@@ -92,6 +99,9 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
 
         self.num_synos = num_synos
         self.label_weights = torch.tensor(label_weights)
+        self.is_dssmed = is_dssmed
+        self.dssm_weight = dssm_weight
+        self.cls_weight = cls_weight
 
     @property
     def transform(self):
@@ -109,27 +119,53 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
 
         output = self(x, **z)
         logits = output["logits"]
-
+        loss = 0
         # classification loss
-        cls_loss = nn.functional.cross_entropy(
-            logits,
-            y,
-            reduction="none",
-            weight=(
-                self.label_weights.to(y.device)
-                if stage == "train" else
-                None
-            )
-        )
-
-        loss = cls_loss.mean()
-
         if (stage == "train"):
+            cls_loss = focal_loss(
+                logits,
+                y,
+                weight=(
+                    self.label_weights.to(y.device)
+                    if stage == "train" else
+                    None
+                )
+            )
+            loss += cls_loss.mean() * self.cls_weight
             self.log(
                 f"{stage}/{dts_name}/loss",
                 cls_loss.mean(),
                 batch_size=logits.shape[0]
             )
+        else:
+            # classification loss
+            cls_loss = nn.functional.cross_entropy(
+                logits,
+                y,
+                reduction="none",
+                weight=(
+                    self.label_weights.to(y.device)
+                    if stage == "train" else
+                    None
+                )
+            )
+            loss += cls_loss.mean()
+
+        # dissimilarity loss
+        if (stage == "train" and self.is_dssmed):
+            projs = output["projs"]
+            projs = projs.unflatten(0, (-1, 2))
+            dssm_loss = (1 + torch.nn.functional.cosine_similarity(
+                projs[:, 0],
+                projs[:, 1],
+                dim=-1
+            ))
+            self.log(
+                f"{stage}/{dts_name}/dssm_loss",
+                dssm_loss.mean(),
+                batch_size=logits.shape[0]
+            )
+            loss += dssm_loss.mean() * self.dssm_weight
 
         return {
             "logits": logits,
@@ -163,12 +199,20 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         num_frames: int = 1,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
-        attn_record: bool = False,
         pretrain: str = None,
-        label_weights: List[float] = [1, 1],
+        layer_ratio: float = 1.0,
+
+        attn_record: bool = False,
+
         store_attrs: List[str] = [],
+        is_temporal_conv: bool = True,
         mask_ratio: float = 0.0,
-        is_temporal_conv: bool = True
+
+        cls_weight: float = 1.0,
+        label_weights: List[float] = [1, 1],
+
+        is_dssmed: bool = True,
+        dssm_weight: float = 1.0,
     ):
         self.num_face_parts = len(face_parts)
         self.face_attn_attr = face_attn_attr
@@ -180,15 +224,19 @@ class FFGSynoVideoLearner(SynoVideoLearner):
 
         super().__init__(
             num_frames=num_frames,
+            num_synos=self.num_face_parts,
             architecture=architecture,
+            layer_ratio=layer_ratio,
             text_embed=text_embed,
             attn_record=attn_record,
             pretrain=pretrain,
-            label_weights=label_weights,
-            num_synos=self.num_face_parts,
             store_attrs=set([*store_attrs, self.syno_attn_attr]),
             mask_ratio=mask_ratio,
-            is_temporal_conv=is_temporal_conv
+            is_temporal_conv=is_temporal_conv,
+            cls_weight=cls_weight,
+            label_weights=label_weights,
+            is_dssmed=is_dssmed,
+            dssm_weight=dssm_weight
         )
 
         self.save_hyperparameters()

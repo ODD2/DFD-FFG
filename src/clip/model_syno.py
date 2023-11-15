@@ -228,7 +228,6 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self,
         embed_dim,
         n_head,
-        syno_temper=1,
         attn_record=False,
         is_temporal_conv=True,
         enable_syno=True
@@ -240,16 +239,15 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
         self.n_head = n_head
-        # syno's
-        self.syno_temper = syno_temper
 
-        if (is_temporal_conv and enable_syno):
-            self.syno_temporal = self.create_syno_temporal(
-                embed_dim,
-                self.n_head
-            )
-        else:
-            self.syno_temporal = None
+        # syno's
+        self.syno_temporal = None
+        if (enable_syno):
+            if (is_temporal_conv):
+                self.syno_temporal = self.create_syno_temporal(
+                    embed_dim,
+                    self.n_head
+                )
 
         # recordings
         self.attn_record = attn_record
@@ -257,10 +255,10 @@ class MultiheadAttentionAttrExtract(nn.Module):
         self.s_aff = None
 
     def tuneable_modules(self):
+        modules = []
         if (not self.syno_temporal is None):
-            return [self.syno_temporal]
-        else:
-            return []
+            modules.append(self.syno_temporal)
+        return modules
 
     def create_syno_temporal(self, embed_dim, heads):
         conv_1d = nn.Conv1d(
@@ -270,7 +268,7 @@ class MultiheadAttentionAttrExtract(nn.Module):
             stride=1,
             padding=1,
             groups=embed_dim,
-            bias=False
+            bias=True
         )
 
         nn.init.normal_(conv_1d.weight, std=0.001)
@@ -335,19 +333,21 @@ class MultiheadAttentionAttrExtract(nn.Module):
             te_k = te_k.view(*view_as)
             te_v = te_v.view(*view_as)
 
+            _k = k[:, :, 1:]
+            _v = v[:, :, 1:]
             s_aff = torch.einsum(
                 'nqhc,ntkhc->ntqkh',
                 s_q / (s_q.size(-1) ** 0.5),
-                k[:, :, 1:] + te_k
+                _k + te_k
             )  # ignore cls embedding
 
             s_aff += patch_mask
-            s_aff = s_aff.softmax(dim=-2) * self.syno_temper
+            s_aff = s_aff.softmax(dim=-2)
 
             s_mix = torch.einsum(
                 'ntqlh,ntlhc->ntqhc',
                 s_aff,
-                v[:, :, 1:] + te_v
+                _v + te_v
             )  # ignore cls embedding
 
             if not self.syno_temporal == None:
@@ -434,14 +434,20 @@ class VResidualAttentionBlock(nn.Module):
 
     def make_syno_mlp(self, d_model):
         ln = nn.LayerNorm(d_model)
-        linear = nn.Linear(
+        linear1 = nn.Linear(
             d_model,
+            d_model // 8,
+            bias=False
+        )
+        linear2 = nn.Linear(
+            d_model // 8,
             d_model,
             bias=False
         )
 
-        nn.init.normal_(linear.weight, std=0.001)
-        return [ln, linear]
+        nn.init.normal_(linear1.weight, std=0.001)
+        nn.init.normal_(linear2.weight, std=0.001)
+        return [ln, linear1, linear2]
 
     def tuneable_modules(self):
         modules = self.attn.tuneable_modules()

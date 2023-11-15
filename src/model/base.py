@@ -6,7 +6,7 @@ from torch import optim
 from functools import partial
 from torchmetrics import Metric
 from torchmetrics.aggregation import MeanMetric
-from torchmetrics.classification import AUROC, Accuracy, BinaryConfusionMatrix
+from torchmetrics.classification import AUROC, Accuracy, BinaryConfusionMatrix, AveragePrecision
 
 
 class GenericStatistics(Metric):
@@ -90,6 +90,7 @@ class ODBinaryMetricClassifier(ODClassifier):
             "auc": partial(AUROC, task="BINARY", num_classes=2),
             "acc": partial(Accuracy, task="BINARY", num_classes=2),
             "cm": partial(BinaryConfusionMatrix, normalize="true"),
+            "ap": partial(AveragePrecision, task="BINARY", num_classes=2),
             "loss": MeanMetric,
             "stats/real": GenericStatistics,
             "stats/fake": GenericStatistics
@@ -116,6 +117,7 @@ class ODBinaryMetricClassifier(ODClassifier):
         loss = result["loss"].detach()
         self.get_metric(result['dts_name'], 'auc', logits.device).update(logits[:, 1], labels)
         self.get_metric(result['dts_name'], 'acc', logits.device).update(logits[:, 1], labels)
+        self.get_metric(result['dts_name'], 'ap', logits.device).update(logits[:, 1], labels)
         self.get_metric(result['dts_name'], 'cm', logits.device).update(logits[:, 1], labels)
         self.get_metric(result['dts_name'], 'loss', logits.device).update(loss)
         labels = labels.to(dtype=bool)

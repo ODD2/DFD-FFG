@@ -52,7 +52,7 @@ def one_patch_cos_sim(x, t, c, n_patch, *args, **kargs):
     )
 
 
-def semantic_patch_cos_sim(x, n_patch, part, _s, _l, semantic_patches, s=None, *args, **kargs):
+def semantic_patch_temper_smax(x, n_patch, part, _s, _l, semantic_patches, s=None, *args, **kargs):
     # shows the video patch similarities given a semantic patch
     # _l -> the layer of the feature x
     # s -> the mandatory subject, overwrites _s
@@ -61,12 +61,35 @@ def semantic_patch_cos_sim(x, n_patch, part, _s, _l, semantic_patches, s=None, *
         (
             (
                 (
+                    x @ semantic_patches[_s if s == None else s][part][_l]
+                )
+            ).softmax(dim=-1)
+            .view((-1, n_patch, n_patch))
+            .permute(1, 0, 2)
+            .flatten(1, 2)
+            .unsqueeze(-1)
+        )
+    )
+    feat = (feat - feat.min()) / (feat.max() - feat.min())
+    return feat
+
+
+def semantic_patch_cos_sim(x, n_patch, part, _s, _l, semantic_patches, s=None, *args, **kargs):
+    # shows the video patch similarities given a semantic patch
+    # _l -> the layer of the feature x
+    # s -> the mandatory subject, overwrites _s
+    # _s -> the subject of the feature x
+    vec = semantic_patches[_s if s == None else s][part][_l]
+    feat = (
+        (
+            (
+                (
                     torch.nn.functional.cosine_similarity(
                         x,
                         semantic_patches[_s if s == None else s][part][_l],
                         dim=-1
-                    ) / 2 + 0.5
-                ) * 30
+                    )
+                )
             ).softmax(dim=-1)
             .view((-1, n_patch, n_patch))
             .permute(1, 0, 2)
@@ -144,11 +167,7 @@ def driver(features, method, subjects=None, n_patch=14, **kargs):
     return r
 
 
-evals = driver(features, semantic_patch_cos_sim, part=part, s="q", semantic_patches=semantic_patches, n_patch=n_patch)
-plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
-
 # %%
-
 encoder = VideoAttrExtractor(
     architecture="ViT-L/14",
     text_embed=False,
@@ -200,7 +219,7 @@ with open("misc/L14_real_semantic_patches_v2_2000.pickle", "rb") as f:
 
 # %%
 plot_params = dict(vmin=0, vmax=1)
-part = "lips"
+part = "nose"
 # %%
 print(features[0]["q"].shape)
 # %%

@@ -63,9 +63,11 @@ def interpret(
     logit_index=1,
     mode="all",
     num_layers=-1,
+    aspect="frame"
 ):
     # For now, enforce frame level estimation
     model.zero_grad()
+    clips = clips.to(DEVICE)
     num_patch = model.encoder.model.patch_num
     num_patch_per_side = int(math.sqrt(num_patch))
     image_attn_blocks = list(
@@ -75,7 +77,7 @@ def interpret(
     logits = model(clips)["logits"]
     indicator = logits[:, logit_index].sum(dim=0)
 
-    overall_relevance = 0
+    relevance_storage = []
 
     if (num_layers == -1):
         beg_layer = 0
@@ -123,11 +125,20 @@ def interpret(
 
         model.zero_grad()
 
-        overall_relevance += (relevance / num_layers)
+        relevance_storage.append(relevance)
 
-    return dict(
-        relevance=overall_relevance
-    )
+    if aspect == "frame":
+        relevance_storage = sum(relevance_storage) / len(relevance_storage)
+    elif aspect == "layer":
+        relevance_storage = torch.stack(
+            [rel.mean(dim=0) for rel in relevance_storage]
+        )
+
+    model.zero_grad()
+    del clips
+    del logits
+    del indicator
+    return relevance_storage
 
 
 def draw_flatten_heatmap(relevance: torch.Tensor, scale=500):
@@ -162,7 +173,8 @@ def draw_flatten_heatmap(relevance: torch.Tensor, scale=500):
 # interpret prediction
 UNIT = 2
 FRAMES = 10
-NUM_SAMPLES = 12
+NUM_BATCHES = 12
+BATCH_SIZE = 1
 NUM_LAYERS = 24
 
 # sample videos
@@ -173,10 +185,10 @@ clips = torch.cat(
             random.randrange(0, len(dataset)),
             with_entity_info=True
         )["clips"]
-        for _ in range(NUM_SAMPLES)
+        for _ in range(NUM_BATCHES * BATCH_SIZE)
     ],
     dim=0
-).to(DEVICE)
+)
 
 model_configs = [
     # ("none", SynoVideoLearner, "logs/DFD-FFG/kjfr7es5/checkpoints/epoch=8-step=535.ckpt"),
@@ -198,18 +210,27 @@ model_configs = [
     # ("p5tdrroa", FFGSynoVideoLearner, "logs/DFD-FFG/p5tdrroa/checkpoints/last.ckpt"),
     # ("xwnug1t1", FFGSynoVideoLearner, "logs/DFD-FFG/xwnug1t1/checkpoints/last.ckpt"),
     # ("cnex8ypf", FFGSynoVideoLearner, "logs/DFD-FFG/cnex8ypf/checkpoints/last.ckpt"),
-    ("cnex8ypf", FFGSynoVideoLearner, "logs/DFD-FFG/stnn1s5y/checkpoints/last.ckpt"),
-    ("2avus0qv", FFGSynoVideoLearner, "logs/DFD-FFG/2avus0qv/checkpoints/last.ckpt"),
-    ("rkw6q4zw", FFGSynoVideoLearner, "logs/DFD-FFG/rkw6q4zw/checkpoints/last.ckpt")
+    # ("cnex8ypf", FFGSynoVideoLearner, "logs/DFD-FFG/stnn1s5y/checkpoints/last.ckpt"),
+    # ("2avus0qv", FFGSynoVideoLearner, "logs/DFD-FFG/2avus0qv/checkpoints/last.ckpt"),
+    # ("rkw6q4zw", FFGSynoVideoLearner, "logs/DFD-FFG/rkw6q4zw/checkpoints/last.ckpt")
+    # ("125", FFGSynoVideoLearner, "logs/DFD-FFG(Experiment)/8iz2btxl/checkpoints/last.ckpt"),
+    # ("125", FFGSynoVideoLearner, "logs/DFD-FFG(Experiment)/hfne0qof/checkpoints/last.ckpt"),
+    # ("125", FFGSynoVideoLearner, "logs/DFD-FFG(Experiment)/pvdrbg3m/checkpoints/last.ckpt")
+    # ("125", FFGSynoVideoLearner, "logs/DFD-FFG(Experiment)/35g5yvj5/checkpoints/last.ckpt"),
+    # ("125", FFGSynoVideoLearner, "logs/DFD-FFG(Experiment)/9uyiv6pc/checkpoints/last.ckpt"),
+    ("125", FFGSynoVideoLearner, "logs/DFD-FFG(Experiment)/kzp2z4pe/checkpoints/last.ckpt")
 ]
 
 scenarios = [
     (
-        syno,
-        50000,
-        1,
-        "all",
-        18,
+        syno,  # syno num
+        1,  # logit
+        # ("all", 50000),  # mode,scaler
+        # ("grad", 500),
+        ("cam", 100),
+        -1,  # layers(from tail)
+        "layer"  # aspect
+
     )
     for syno in [0, 1, 2, 3]
 ]
@@ -220,27 +241,37 @@ def runner(model_config, scenario):
     model = load_model(model_cls, model_path).model
     model.to(DEVICE)
     model.eval()
-    syno, scale, logit_index, mode, num_layers = scenario
+    syno, logit_index, mode_scale, num_layers, aspect = scenario
+    mode = mode_scale[0]
+    scale = mode_scale[1]
 
-    results = interpret(
-        clips,
-        model,
-        query_idx=syno,
-        logit_index=logit_index,
-        mode=mode,
-        num_layers=num_layers
-    )
+    relevance = 0
+    for b in range(0, NUM_BATCHES * BATCH_SIZE, BATCH_SIZE):
+        print(clips.shape)
+        print(b, b + BATCH_SIZE)
+        relevance += interpret(
+            clips[b:b + BATCH_SIZE],
+            model,
+            query_idx=syno,
+            logit_index=logit_index,
+            mode=mode,
+            num_layers=num_layers,
+            aspect=aspect
+        ) / NUM_BATCHES
+        gc.collect()
+        torch.cuda.empty_cache()
 
     flatten_heatmap = draw_flatten_heatmap(
-        results["relevance"],
+        relevance,
         scale=scale
     )
 
-    title = "model={}/scale={}/syno={}/logit={}".format(
+    title = "model={}/scale={}/syno={}/logit={}/aspect={}".format(
         model_name,
         scale,
         int(syno),
-        int(logit_index)
+        int(logit_index),
+        aspect
     )
 
     return dict(

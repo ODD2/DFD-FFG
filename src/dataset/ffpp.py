@@ -6,6 +6,7 @@ class FFPPSampleStrategy(IntEnum):
     CONTRAST_RAND = auto()
     QUALITY_PAIR = auto()
     CONTRAST_PAIR = auto()
+    FORCE_PAIR = auto()
 
 
 class FFPPAugmentation(IntFlag):
@@ -242,16 +243,16 @@ class FFPP(DeepFakeDataset):
                         self.n_px, self.n_px, cv2.INTER_CUBIC
                     ),
                     alb.RGBShift(
-                        (-20, 20), (-20, 20), (-20, 20), p=0.1
+                        (-20, 20), (-20, 20), (-20, 20), p=0.3
                     ),
                     alb.HueSaturationValue(
-                        hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.1
+                        hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.3
                     ),
                     alb.RandomBrightnessContrast(
-                        brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=0.1
+                        brightness_limit=(-0.1, 0.1), contrast_limit=(-0.1, 0.1), p=0.3
                     ),
-                    alb.ImageCompression(
-                        quality_lower=40, quality_upper=100, p=0.1
+                    alb.RandomResizedCrop(
+                        self.n_px, self.n_px, scale=(0.6, 1.0), ratio=(1, 1), p=1.0
                     )
                 ]
 
@@ -259,13 +260,13 @@ class FFPP(DeepFakeDataset):
                     augmentations += [
                         alb.OneOf(
                             [
-                                alb.RandomResizedCrop(
-                                    self.n_px, self.n_px, scale=(0.5, 0.75), ratio=(1, 1), p=1
+                                alb.ImageCompression(
+                                    quality_lower=40, quality_upper=100, p=1
                                 ),
                                 alb.Compose(
                                     [
                                         alb.RandomScale(
-                                            (-0.5, -0.25), always_apply=True
+                                            (-0.4, -0.2), always_apply=True
                                         ),
                                         alb.Resize(
                                             self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
@@ -273,13 +274,14 @@ class FFPP(DeepFakeDataset):
                                     ], p=1
                                 ),
                                 alb.Blur(
-                                    [7, 13],
+                                    [3, 5],
                                     p=1
                                 )
                             ],
-                            p=0.3
+                            p=0.5
                         )
                     ]
+
                 self.video_augmentation = alb.ReplayCompose(
                     augmentations,
                     p=1.
@@ -540,6 +542,43 @@ class FFPP(DeepFakeDataset):
                     logging.debug(f"Pair with {video_name}...")
 
                 desire_entity_indices = [idx, c_idx]
+            elif self.strategy == FFPPSampleStrategy.FORCE_PAIR:
+                video_idx, video_df_type, _, video_idx_name, _ = self.video_info(idx)
+                offset_clip = (
+                    idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx - 1])
+                )
+                logging.debug(f"Source Index/DF_TYPE: {idx}/{video_df_type}")
+                if (video_df_type == "REAL"):
+                    logging.debug(f"Seek for a Fake Entity...")
+                    try:
+                        ground = "back"
+                        video_name = video_idx_name
+                        if (not video_name in self.fake_clip_idx[ground]):
+                            raise Exception("unable to pair video.")
+                        interval = random.choice(self.fake_clip_idx[ground][video_name])
+                        if (offset_clip > (interval[1] - interval[0])):
+                            raise Exception("unable to pair video clip.")
+                        c_idx = interval[0] + offset_clip
+                    except Exception as e:
+                        continue
+                    else:
+                        logging.debug(f"Pair with {video_name} at {ground}-ground ...")
+                else:
+                    logging.debug(f"Seek for a Real Entity...")
+                    try:
+                        video_name = video_idx_name.split("_")[0]
+                        if (not video_name in self.real_clip_idx):
+                            raise Exception("unable to pair video.")
+                        interval = self.real_clip_idx[video_name]
+                        if (offset_clip > (interval[1] - interval[0])):
+                            raise Exception("unable to pair video clip.")
+                        c_idx = interval[0] + offset_clip
+                    except Exception as e:
+                        continue
+                    else:
+                        logging.debug(f"Pair with {video_name}...")
+
+                desire_entity_indices = [idx, c_idx]
             elif self.strategy == FFPPSampleStrategy.QUALITY_PAIR:
                 raise NotImplementedError()
             else:
@@ -565,14 +604,24 @@ class FFPP(DeepFakeDataset):
 
     def get_item(self, idx, with_entity_info=False):
         desire_entity_indices = self.item_entity_list[idx]
-        item_entities = [
-            self.get_entity(
+        item_entities = []
+        replay = None
+        for desire_item_index in desire_entity_indices:
+            result = self.get_entity(
                 desire_item_index,
+                replay=replay,
                 with_entity_info=with_entity_info
             )
-            for desire_item_index in desire_entity_indices
-        ]
 
+            if (
+                self.strategy == FFPPSampleStrategy.CONTRAST_PAIR or
+                self.strategy == FFPPSampleStrategy.FORCE_PAIR
+            ):
+                replay = result.pop("replay")
+            else:
+                result.pop("replay")
+
+            item_entities.append(result)
         return item_entities
 
     def get_entity(self, idx, replay=None, with_entity_info=False):
@@ -694,7 +743,8 @@ class FFPP(DeepFakeDataset):
             "label": 0 if (df_type == "REAL") else 1,
             "df_label": list(self.TYPE_DIRS.keys()).index(df_type),
             "masks": entity_masks,
-            "idx": idx
+            "idx": idx,
+            "replay": replay
         }
 
         if with_entity_info:
