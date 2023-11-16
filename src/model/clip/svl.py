@@ -76,10 +76,6 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
 
         cls_weight: float = 1.0,
         label_weights: List[float] = [1, 1],
-
-        is_dssmed: bool = True,
-        dssm_weight: float = 1.0,
-
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -99,8 +95,6 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
 
         self.num_synos = num_synos
         self.label_weights = torch.tensor(label_weights)
-        self.is_dssmed = is_dssmed
-        self.dssm_weight = dssm_weight
         self.cls_weight = cls_weight
 
     @property
@@ -151,22 +145,6 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             )
             loss += cls_loss.mean()
 
-        # dissimilarity loss
-        if (stage == "train" and self.is_dssmed):
-            projs = output["projs"]
-            projs = projs.unflatten(0, (-1, 2))
-            dssm_loss = (1 + torch.nn.functional.cosine_similarity(
-                projs[:, 0],
-                projs[:, 1],
-                dim=-1
-            ))
-            self.log(
-                f"{stage}/{dts_name}/dssm_loss",
-                dssm_loss.mean(),
-                batch_size=logits.shape[0]
-            )
-            loss += dssm_loss.mean() * self.dssm_weight
-
         return {
             "logits": logits,
             "labels": y,
@@ -210,9 +188,6 @@ class FFGSynoVideoLearner(SynoVideoLearner):
 
         cls_weight: float = 1.0,
         label_weights: List[float] = [1, 1],
-
-        is_dssmed: bool = True,
-        dssm_weight: float = 1.0,
     ):
         self.num_face_parts = len(face_parts)
         self.face_attn_attr = face_attn_attr
@@ -235,8 +210,6 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             is_temporal_conv=is_temporal_conv,
             cls_weight=cls_weight,
             label_weights=label_weights,
-            is_dssmed=is_dssmed,
-            dssm_weight=dssm_weight
         )
 
         self.save_hyperparameters()
