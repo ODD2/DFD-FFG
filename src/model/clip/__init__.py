@@ -21,16 +21,25 @@ def load_model(architecture, **kargs):
     if (len(params) == 2):
         open_pretrain = params[1]
 
-        _model, _, _transform = open_clip.create_model_and_transforms(
+        _model, _, _ = open_clip.create_model_and_transforms(
             clip_arch.replace("/", "-"),
             pretrained=open_pretrain,
             device="cpu"
         )
-
-        model.load_state_dict(_model.state_dict())
-        transform = _transform
-
+        try:
+            model.load_state_dict(
+                _model.state_dict(),
+                strict=True)
+        except:
+            conflicts = model.load_state_dict(
+                _model.state_dict(),
+                strict=False
+            )
+            logging.warning(
+                f"OpenCLIP pretrain weights loading, disabling strict mode with conflicts:\n{conflicts}"
+            )
         del _model
+
     elif (len(params) > 2):
         raise NotImplementedError()
 
