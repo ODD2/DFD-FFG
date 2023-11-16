@@ -220,27 +220,28 @@ def fetch_semantic_features(
 # %%
 if __name__ == "__main__":
     encoder = VideoAttrExtractor(
-        architecture="ViT-B/16",
+        architecture="ViT-L/14|datacomp_xl_s13b_b90k",
         text_embed=False,
-        num_frames=1
+        num_frames=1,
+        store_attrs=["q", "k", "v", "out", "emb"]
     )
 
     encoder.eval()
     encoder.to("cuda")
 
-    # fetch_semantic_features(
-    #     encoder, df_types=["REAL"],
-    #     sample_num=SAMPLE_NUM,
-    #     visualize=False,
-    #     save_path=f"./misc/L14_real_semantic_patches_v2_{SAMPLE_NUM}.pickle",
-    #     seed=1019
-    # )
-
     fetch_semantic_features(
         encoder, df_types=["REAL"],
-        sample_num=1,
-        visualize=True,
+        sample_num=SAMPLE_NUM,
+        visualize=False,
+        save_path=f"./misc/L14_datacomb_real_semantic_patches_v1_{SAMPLE_NUM}.pickle",
         seed=1019
     )
+
+    # fetch_semantic_features(
+    #     encoder, df_types=["REAL"],
+    #     sample_num=1,
+    #     visualize=True,
+    #     seed=1019
+    # )
 
 # %%
