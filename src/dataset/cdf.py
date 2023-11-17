@@ -75,10 +75,11 @@ class CDF(DeepFakeDataset):
                         clips = min(clips, self.max_clips)
                         _videos.append((df_type.upper(), name, clips))
                 else:
+                    name = f"{df_type.upper()}/{name}"
                     logging.warning(
                         f'Video {path.join(self.data_dir, self.TYPE_DIRS[df_type], "videos", name)} does not present in the processed dataset.'
                     )
-                    self.stray_videos[filename] = (0 if df_type == "REAL" else 1)
+                    self.stray_videos[name] = (0 if df_type == "REAL" else 1)
 
             self.video_list += _videos[:int(len(_videos) * self.ratio)]
 
@@ -225,6 +226,9 @@ class CDF(DeepFakeDataset):
             video_idx = next(i for i, x in enumerate(self.stack_video_clips) if idx < x)
         return video_idx, *self.video_list[video_idx]
 
+    def video_repr(self, idx):
+        return '/'.join([str(i) for i in self.video_info(idx)[1:-1]])
+
     def video_meta(self, idx):
         df_type, name = self.video_info(idx)[1:3]
         return self.video_table[df_type][name]
@@ -272,7 +276,7 @@ if __name__ == "__main__":
     dtm = CDFDataModule(
         data_dir="datasets/cdf/",
         vid_ext=".avi",
-        batch_size=22,
+        batch_size=1,
         num_workers=0,
         num_frames=10,
         clip_duration=1,

@@ -445,7 +445,7 @@ class FFPP(DeepFakeDataset):
                         logging.warning(
                             f'Video {path.join(self.data_dir, self.TYPE_DIRS[df_type], comp, "videos", idx)} does not present in the processed dataset.'
                         )
-                        self.stray_videos[idx] = (0 if df_type == "REAL" else 1)
+                        self.stray_videos[f"{df_type}/{comp}/{idx}"] = (0 if df_type == "REAL" else 1)
                 self.video_list += comp_videos[:int(len(comp_videos) * self.ratio)]
 
         # permanant shuffle

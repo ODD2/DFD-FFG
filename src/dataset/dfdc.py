@@ -71,10 +71,11 @@ class DFDC(DeepFakeDataset):
                     clips = min(clips, self.max_clips)
                     label_videos[label].append((label, name, clips))
             else:
+                name = f"{label}/{name}"
                 logging.warning(
                     f'Video {path.join(self.data_dir, "videos", name)} does not present in the processed dataset.'
                 )
-                self.stray_videos[filename] = (0 if label == "REAL" else 1)
+                self.stray_videos[name] = (0 if label == "REAL" else 1)
         for label in label_videos:
             _videos = label_videos[label]
             self.video_list += _videos[:int(len(_videos) * self.ratio)]
@@ -221,6 +222,9 @@ class DFDC(DeepFakeDataset):
         else:
             video_idx = next(i for i, x in enumerate(self.stack_video_clips) if idx < x)
         return video_idx, *self.video_list[video_idx]
+
+    def video_repr(self, idx):
+        return '/'.join([str(i) for i in self.video_info(idx)[1:-1]])
 
     def video_meta(self, idx):
         df_type, name = self.video_info(idx)[1:3]

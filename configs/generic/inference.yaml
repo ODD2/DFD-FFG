@@ -1,7 +1,6 @@
-data:
   class_path: src.dataset.base.ODDeepFakeDataModule
   init_args:
-    batch_size: 1
+    batch_size: 30
     num_workers: 8
     clip_duration: 4
     num_frames: 10
@@ -16,20 +15,20 @@ data:
         force_random_speed: null
         data_dir: 'datasets/ffpp/'
         vid_ext: .avi
-        pack: true
     - class_path: src.dataset.cdf.CDFDataModule
       init_args:
         data_dir: 'datasets/cdf/'
         vid_ext: .avi
-        pack: true
     - class_path: src.dataset.dfdc.DFDCDataModule
       init_args:
         data_dir: 'datasets/dfdc/'
         vid_ext: .avi
-        pack: true
     - class_path: src.dataset.fsh.FShDataModule
       init_args:
         data_dir: 'datasets/ffpp/'
         compressions: ['c23']
         vid_ext: .avi
-        pack: true
+    - class_path: src.dataset.dfo.DFoDataModule
+      init_args:
+        data_dir: 'datasets/dfo/'
+        vid_ext: .avi

@@ -14,6 +14,24 @@ from lightning.pytorch.cli import LightningCLI
 from torchmetrics.classification import AUROC, Accuracy
 
 
+class StatsRecorder:
+    def __init__(self, label):
+        self.label = label
+        self.prob = 0
+        self.count = 0
+
+    def update(self, prob, label):
+        assert label == self.label
+        self.prob += prob
+        self.count += 1
+
+    def compute(self):
+        return {
+            "label": self.label,
+            "prob": self.prob / self.count
+        }
+
+
 def configure_logging():
     logging_fmt = "[%(levelname)s][%(filename)s:%(lineno)d]: %(message)s"
     logging.basicConfig(level="INFO", format=logging_fmt)
@@ -25,15 +43,21 @@ def parse_args(args=None):
     parser.add_argument("model_cfg_path", type=str)
     parser.add_argument("data_cfg_path", type=str)
     parser.add_argument("ckpt_path", type=str)
+    parser.add_argument("--precision", type=int, default=16)
+    parser.add_argument("--device", type=str, default="cuda")
     return parser.parse_args(args=args)
-
-
-N = 8
 
 
 @torch.inference_mode()
 def main(args=None):
     params = parse_args(args=args)
+    device = params.device
+    if params.precision == 32:
+        dtype = torch.float32
+    elif params.precision == 16:
+        dtype = torch.float16
+    else:
+        raise NotImplementedError()
 
     configure_logging()
 
@@ -66,8 +90,8 @@ def main(args=None):
     # setup model
     model = cli.model
     model = model.__class__.load_from_checkpoint(params.ckpt_path, strict=False)
+    model = model.to(device)
     model.eval()
-    device = model.device
 
     # setup dataset
     datamodule = cli.datamodule
@@ -85,52 +109,54 @@ def main(args=None):
         auc_calc = AUROC(task="BINARY", num_classes=2)
         acc_calc = Accuracy(task="BINARY", num_classes=2)
         dataset = dataloader.dataset
-        stats[dts_name] = {"label": [], "prob": [], "meta": []}
+        dts_stats = {}
         for batch in tqdm(dataloader):
             x, y, z = batch["xyz"]
-            indices = batch["indices"]
+            names = batch["names"]
             x = x.to(device)
             z = {
                 _k: z[_k].to(device)
                 for _k in z
             }
-
-            probs = []
-            for beg in range(0, x.shape[0], N):
+            y = y.tolist()
+            with torch.autocast(device_type=device, dtype=dtype):
                 results = model.evaluate(
-                    x[beg:beg + N],
-                    **{
-                        _k: z[_k][beg:beg + N]
-                        for _k in z
-                    }
+                    x,
+                    **z
                 )
-                probs.append(results["logits"].softmax(dim=-1).detach().cpu())
-            prob = torch.cat(probs).mean(dim=0)
-            label = y[0]
-            index = indices[0]
+            probs = results["logits"].softmax(dim=-1)[:, 1].detach().cpu().tolist()
 
-            # statistic recordings
-            stats[dts_name]["label"].append(label.item())
-            stats[dts_name]["prob"].append(prob[1].item())
-            stats[dts_name]["meta"].append(dataset.video_meta(index))
+            for prob, label, name in zip(probs, y, names):
+                if (not name in dts_stats):
+                    dts_stats[name] = StatsRecorder(label)
+                dts_stats[name].update(prob, label)
 
-            acc_calc.update(prob[1].unsqueeze(0), label.unsqueeze(0))
-            auc_calc.update(prob[1].unsqueeze(0), label.unsqueeze(0))
+        # compute the average probability.
+        for k in dts_stats:
+            dts_stats[k] = dts_stats[k].compute()
 
         # add straying videos into metric calculation
-        stray_names = list(dataset.stray_videos.keys())
-        stray_labels = [dataset.stray_videos[name] for name in stray_names]
-        stray_preds = [0 if i > 0.5 else 1 for i in stray_labels]
-        stray_probs = [0.5] * len(stray_labels)
-        stats[dts_name]["label"] += stray_preds
-        stats[dts_name]["prob"] += stray_probs
-        stats[dts_name]["meta"] += [{"path": name, "stray": 1} for name in stray_names]
-        acc_calc.update(torch.tensor(stray_probs), torch.tensor(stray_labels))
-        auc_calc.update(torch.tensor(stray_probs), torch.tensor(stray_labels))
+        for k, v in dataset.stray_videos.items():
+            dts_stats[k] = dict(
+                label=v,
+                prob=0.5,
+                stray=1
+            )
 
-        accuracy = round(acc_calc.compute().item(), 3)
-        roc_auc = round(auc_calc.compute().item(), 3)
+        # compute the metric scores
+        dataset_labels = []
+        dataset_probs = []
+        for v in dts_stats.values():
+            dataset_labels.append(v["label"])
+            dataset_probs.append(v["prob"])
+        dataset_labels = torch.tensor(dataset_labels)
+        dataset_probs = torch.tensor(dataset_probs)
+        accuracy = acc_calc(dataset_probs, dataset_labels).item()
+        roc_auc = auc_calc(dataset_probs, dataset_labels).item()
+        accuracy = round(accuracy, 3)
+        roc_auc = round(roc_auc, 3)
         logging.info(f'[{dts_name}] accuracy: {accuracy}, roc_auc: {roc_auc}')
+        stats[dts_name] = dts_stats
         report[dts_name] = {
             "accuracy": accuracy,
             "roc_auc": roc_auc
