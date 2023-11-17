@@ -7,7 +7,7 @@ init_args:
   train_datamodules:
   - class_path: src.dataset.ffpp.FFPPDataModule
     init_args:
-      batch_size: 30
+      batch_size: 25
       df_types: ['REAL','DF','FS','F2F','NT']
       compressions: ['c23']
       strategy: FORCE_PAIR
@@ -15,6 +15,7 @@ init_args:
       - NORMAL
       - VIDEO
       - VIDEO_RRC
+      - FRAME
       force_random_speed: null
       data_dir: 'datasets/ffpp/'
       vid_ext: '.avi'

@@ -119,6 +119,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             cls_loss = focal_loss(
                 logits,
                 y,
+                gamma=4,
                 weight=(
                     self.label_weights.to(y.device)
                     if stage == "train" else
@@ -169,7 +170,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         face_attn_attr: str = "k",
         syno_attn_attr: str = "s_q",
         ffg_temper: float = 30,
-        ffg_weight: float = 5e-1,
+        ffg_weight: float = 1.5,
         ffg_layers: int = -1,
         ffg_reverse: bool = False,
 
@@ -184,7 +185,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
 
         store_attrs: List[str] = [],
         is_temporal_conv: bool = True,
-        mask_ratio: float = 0.0,
+        mask_ratio: float = 0.3,
 
         cls_weight: float = 1.0,
         label_weights: List[float] = [1, 1],

@@ -83,7 +83,7 @@ progress_bar:
     metrics: white
   console_kwargs: null
 optimizer:
-  lr: 0.00005
+  lr: 0.00004
   betas:
   - 0.5
   - 0.999
@@ -97,7 +97,7 @@ optimizer:
   fused: null
 lr_scheduler:
   start_factor: 1.0
-  end_factor: 0.2
+  end_factor: 0.75
   total_iters: 5
   last_epoch: -1
   verbose: false
