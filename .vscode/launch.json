@@ -11,8 +11,8 @@
             // "module": "notebooks.text_prompt.gender_alignment",
             // "module": "notebooks.ffg_similarity.syno_and_cls",
             // "module": "notebooks.attention_visualize.encoder",
-            "module": "notebooks.kv_dist_visualize",
-            "justMyCode": true
+            "module": "notebooks.fetch_facial_feature",
+            "justMyCode": false
         },
         {
             "name": "Python: Current File",
@@ -80,6 +80,13 @@
             "type": "python",
             "request": "launch",
             "module": "src.dataset.dfdc",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: DFoDataModule",
+            "type": "python",
+            "request": "launch",
+            "module": "src.dataset.dfo",
             "justMyCode": false
         },
         {
