@@ -71,7 +71,10 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         attn_record: bool = False,
 
         store_attrs: List[str] = [],
+        is_focal_loss: bool = True,
         is_temporal_conv: bool = True,
+        is_syno_adaptor: bool = True,
+        is_temporal_embedding: bool = True,
         mask_ratio: float = 0.0,
 
         cls_weight: float = 1.0,
@@ -89,13 +92,16 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             num_synos=num_synos,
             store_attrs=store_attrs,
             mask_ratio=mask_ratio,
-            is_temporal_conv=is_temporal_conv
+            is_syno_adaptor=is_syno_adaptor,
+            is_temporal_conv=is_temporal_conv,
+            is_temporal_embedding=is_temporal_embedding
         )
         self.model = BinaryLinearClassifier(**params)
 
         self.num_synos = num_synos
         self.label_weights = torch.tensor(label_weights)
         self.cls_weight = cls_weight
+        self.is_focal_loss = is_focal_loss
 
     @property
     def transform(self):
@@ -116,16 +122,28 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         loss = 0
         # classification loss
         if (stage == "train"):
-            cls_loss = focal_loss(
-                logits,
-                y,
-                gamma=4,
-                weight=(
-                    self.label_weights.to(y.device)
-                    if stage == "train" else
-                    None
+            if self.is_focal_loss:
+                cls_loss = focal_loss(
+                    logits,
+                    y,
+                    gamma=4,
+                    weight=(
+                        self.label_weights.to(y.device)
+                        if stage == "train" else
+                        None
+                    )
                 )
-            )
+            else:
+                cls_loss = nn.functional.cross_entropy(
+                    logits,
+                    y,
+                    reduction="none",
+                    weight=(
+                        self.label_weights.to(y.device)
+                        if stage == "train" else
+                        None
+                    )
+                )
             loss += cls_loss.mean() * self.cls_weight
             self.log(
                 f"{stage}/{dts_name}/loss",
@@ -138,11 +156,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
                 logits,
                 y,
                 reduction="none",
-                weight=(
-                    self.label_weights.to(y.device)
-                    if stage == "train" else
-                    None
-                )
+                weight=None
             )
             loss += cls_loss.mean()
 
@@ -184,7 +198,10 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         attn_record: bool = False,
 
         store_attrs: List[str] = [],
+        is_focal_loss: bool = True,
+        is_syno_adaptor: bool = True,
         is_temporal_conv: bool = True,
+        is_temporal_embedding: bool = True,
         mask_ratio: float = 0.3,
 
         cls_weight: float = 1.0,
@@ -208,9 +225,12 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             pretrain=pretrain,
             store_attrs=set([*store_attrs, self.syno_attn_attr]),
             mask_ratio=mask_ratio,
-            is_temporal_conv=is_temporal_conv,
             cls_weight=cls_weight,
             label_weights=label_weights,
+            is_focal_loss=is_focal_loss,
+            is_syno_adaptor=is_syno_adaptor,
+            is_temporal_conv=is_temporal_conv,
+            is_temporal_embedding=is_temporal_embedding
         )
 
         self.save_hyperparameters()

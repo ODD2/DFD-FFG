@@ -59,6 +59,8 @@ class VideoAttrExtractor(nn.Module):
         frozen=False,
         mask_ratio=0.0,
         is_temporal_conv=True,
+        is_syno_adaptor=True,
+        is_temporal_embedding=True,
         enable_syno=True,
         layer_ratio=1.0
     ):
@@ -69,7 +71,9 @@ class VideoAttrExtractor(nn.Module):
             store_attrs=store_attrs,
             attn_record=attn_record,
             num_synos=num_synos,
+            is_syno_adaptor=is_syno_adaptor,
             is_temporal_conv=is_temporal_conv,
+            is_temporal_embedding=is_temporal_embedding,
             enable_syno=enable_syno
         )
         self.mask_ratio = mask_ratio

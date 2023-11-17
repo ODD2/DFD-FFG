@@ -322,16 +322,21 @@ class MultiheadAttentionAttrExtract(nn.Module):
             s_k = s_k.view(*view_as)
             s_v = s_v.view(*view_as)
 
-            te_q, te_k, te_v = F.linear(
-                te,
-                self.in_proj_weight,
-                self.in_proj_bias
-            ).chunk(3, dim=-1)
+            if (not te is None):
+                te_q, te_k, te_v = F.linear(
+                    te,
+                    self.in_proj_weight,
+                    self.in_proj_bias
+                ).chunk(3, dim=-1)
 
-            view_as = (te.shape[0], 1, self.n_head, -1)
-            te_q = te_q.view(*view_as)
-            te_k = te_k.view(*view_as)
-            te_v = te_v.view(*view_as)
+                view_as = (te.shape[0], 1, self.n_head, -1)
+                te_q = te_q.view(*view_as)
+                te_k = te_k.view(*view_as)
+                te_v = te_v.view(*view_as)
+            else:
+                te_q = 0
+                te_k = 0
+                te_v = 0
 
             _k = k[:, :, 1:]
             _v = v[:, :, 1:]
@@ -398,7 +403,9 @@ class VResidualAttentionBlock(nn.Module):
         num_synos: int,
         attn_record: bool = False,
         store_attrs: List[str] = [],
+        is_syno_adaptor: bool = True,
         is_temporal_conv: bool = True,
+        is_temporal_embedding: bool = True,
         enable_syno: bool = True
     ):
         super().__init__()
@@ -422,11 +429,18 @@ class VResidualAttentionBlock(nn.Module):
         ]))
         self.ln_2 = LayerNorm(d_model)
 
-        if (enable_syno):
+        self.enable_syno = enable_syno
+        self.is_syno_adaptor = is_syno_adaptor
+        self.is_temporal_embedding = is_temporal_embedding
+
+        if (enable_syno and is_syno_adaptor):
             self.syno_mlp = nn.Sequential(*self.make_adaptor(d_model=d_model))
-            self.te_mlp = nn.Sequential(*self.make_adaptor(d_model=d_model))
         else:
             self.syno_mlp = None
+
+        if (enable_syno and is_temporal_embedding):
+            self.te_mlp = nn.Sequential(*self.make_adaptor(d_model=d_model))
+        else:
             self.te_mlp = None
 
         # preserve attrs
@@ -493,10 +507,23 @@ class VResidualAttentionBlock(nn.Module):
     ):
         self.pop_attr()
         if (not s is None):
+            if (not te is None):
+                if (not self.te_mlp is None):
+                    _te = self.te_mlp(te) + te
+                else:
+                    _te = te
+            else:
+                _te = None
+
+            if (not self.syno_mlp is None):
+                _s = s + self.syno_mlp(s)
+            else:
+                _s = s
+
             data = self.attention(
                 self.ln_1(x),
-                self.ln_1(s + self.syno_mlp(s)),
-                (self.te_mlp(te) + te),
+                self.ln_1(_s),
+                (_te),
                 patch_mask
             )
         else:
@@ -533,7 +560,9 @@ class VTransformer(nn.Module):
         num_synos: int,
         attn_record: bool = False,
         store_attrs: List[str] = [],
-        is_temporal_conv=True,
+        is_syno_adaptor: bool = True,
+        is_temporal_conv: bool = True,
+        is_temporal_embedding: bool = True,
         enable_syno: bool = True
     ):
         super().__init__()
@@ -550,7 +579,9 @@ class VTransformer(nn.Module):
                 num_synos=num_synos,
                 attn_record=attn_record,
                 store_attrs=store_attrs,
+                is_syno_adaptor=is_syno_adaptor,
                 is_temporal_conv=is_temporal_conv,
+                is_temporal_embedding=is_temporal_embedding,
                 enable_syno=enable_syno
             )
             for i in range(layers)
@@ -592,7 +623,9 @@ class VisionTransformer(nn.Module):
         num_synos: int = 1,
         attn_record: bool = False,
         store_attrs: List[str] = [],
+        is_syno_adaptor: bool = True,
         is_temporal_conv: bool = True,
+        is_temporal_embedding: bool = True,
         enable_syno: bool = True
     ):
         super().__init__()
@@ -624,7 +657,9 @@ class VisionTransformer(nn.Module):
             # generic
             attn_record=attn_record,
             store_attrs=store_attrs,
+            is_syno_adaptor=is_syno_adaptor,
             is_temporal_conv=is_temporal_conv,
+            is_temporal_embedding=is_temporal_embedding,
             enable_syno=enable_syno
         )
 
@@ -635,12 +670,16 @@ class VisionTransformer(nn.Module):
         if (enable_syno):
             self.num_synos = num_synos
             self.syno_embedding = nn.Parameter(torch.zeros(num_synos, width))
-            self.temporal_embedding = nn.Parameter(torch.zeros(num_frames, width))
-            nn.init.normal_(self.temporal_embedding, std=0.001)
         else:
             self.syno_embedding = None
             self.temporal_embedding = None
             self.num_synos = 0
+
+        if (enable_syno and is_temporal_embedding):
+            self.temporal_embedding = nn.Parameter(torch.zeros(num_frames, width))
+            nn.init.normal_(self.temporal_embedding, std=0.001)
+        else:
+            self.temporal_embedding = None
 
     def forward(
         self,
