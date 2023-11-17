@@ -7,6 +7,7 @@ from typing import List
 
 from src.model.base import ODBinaryMetricClassifier
 from src.model.clip import VideoAttrExtractor
+from src.utility.loss import focal_loss
 
 
 class BinaryLinearClassifier(nn.Module):
@@ -91,25 +92,36 @@ class LinearVideoLearner(ODBinaryMetricClassifier):
         logits = output["logits"]
 
         # classification loss
-        cls_loss = nn.functional.cross_entropy(
-            logits,
-            y,
-            reduction="none",
-            weight=(
-                self.label_weights.to(y.device)
-                if stage == "train" else
-                None
-            )
-        )
-
-        loss = cls_loss.mean()
-
         if (stage == "train"):
+            cls_loss = focal_loss(
+                logits,
+                y,
+                gamma=4,
+                weight=(
+                    self.label_weights.to(y.device)
+                    if stage == "train" else
+                    None
+                )
+            )
+            loss += cls_loss.mean() * self.cls_weight
             self.log(
                 f"{stage}/{dts_name}/loss",
                 cls_loss.mean(),
                 batch_size=logits.shape[0]
             )
+        else:
+            # classification loss
+            cls_loss = nn.functional.cross_entropy(
+                logits,
+                y,
+                reduction="none",
+                weight=(
+                    self.label_weights.to(y.device)
+                    if stage == "train" else
+                    None
+                )
+            )
+            loss += cls_loss.mean()
 
         return {
             "logits": logits,
