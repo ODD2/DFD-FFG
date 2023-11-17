@@ -12,6 +12,7 @@ from tqdm import tqdm
 from datetime import datetime
 from lightning.pytorch.cli import LightningCLI
 from torchmetrics.classification import AUROC, Accuracy
+from src.utility.notify import send_to_telegram
 
 
 class StatsRecorder:
@@ -171,7 +172,8 @@ def main(args=None):
     with open(path.join(root, f'stats_{timestamp}.pickle'), "wb") as f:
         pickle.dump(stats, f)
 
-    # TODO: send notification after completing the inference.
+    send_to_telegram(f"Inference for '{root.split('/')[-2]}' Complete!")
+    send_to_telegram(json.dumps(report, sort_keys=True, indent=4, separators=(',', ': ')))
 
     return report
 

@@ -60,7 +60,7 @@ class LinearVideoLearner(ODBinaryMetricClassifier):
         attn_record: bool = False,
         pretrain: str = None,
         label_weights: List[float] = [1, 1],
-        cls_weight: float = 1.0,
+        cls_weight: float = 10.0,
         store_attrs: List[str] = [],
     ):
         super().__init__()

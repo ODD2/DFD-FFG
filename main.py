@@ -105,15 +105,15 @@ def cli_main():
     )
 
     # test the best model.
-    cli.trainer.test(
-        cli.model,
-        datamodule=cli.datamodule,
-        verbose=False,
-        ckpt_path="best"
-    )
+    # cli.trainer.test(
+    #     cli.model,
+    #     datamodule=cli.datamodule,
+    #     verbose=False,
+    #     ckpt_path="best"
+    # )
 
     # inference the best model
-    # scores = inference(cli=cli)
+    scores = inference(cli=cli)
 
     # finally
     cli.trainer.logger.experiment.finish()
@@ -124,12 +124,9 @@ def cli_main():
             cli.config.notes
         )
     )
-    # send_to_telegram(
-    #     "Scores(id:{}/{}):\n\n".format(
-    #         cli.trainer.logger.name,
-    #         cli.trainer.logger.version,
-    #     ) + json.dumps(scores)
-    # )
+    send_to_telegram(
+        json.dumps(scores, sort_keys=True, indent=4, separators=(',', ': '))
+    )
 
 
 if __name__ == "__main__":

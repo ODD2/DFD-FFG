@@ -77,7 +77,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         is_temporal_embedding: bool = True,
         mask_ratio: float = 0.0,
 
-        cls_weight: float = 1.0,
+        cls_weight: float = 10.0,
         label_weights: List[float] = [1, 1],
     ):
         super().__init__()
@@ -204,7 +204,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         is_temporal_embedding: bool = True,
         mask_ratio: float = 0.3,
 
-        cls_weight: float = 1.0,
+        cls_weight: float = 10.0,
         label_weights: List[float] = [1, 1],
     ):
         self.num_face_parts = len(face_parts)
