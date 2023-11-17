@@ -3,6 +3,6 @@ model:
   init_args:
     num_frames: 10
     architecture: ViT-B/16
-    face_feature_path: "misc/real_semantic_patches_v4_1000.pickle"
+    face_feature_path: "misc/B16_real_semantic_patches_v1_2000.pickle"
 trainer:
   accumulate_grad_batches: 1
