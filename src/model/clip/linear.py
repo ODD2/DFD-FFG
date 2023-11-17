@@ -90,7 +90,7 @@ class LinearVideoLearner(ODBinaryMetricClassifier):
 
         output = self(x, **z)
         logits = output["logits"]
-
+        loss = 0
         # classification loss
         if (stage == "train"):
             cls_loss = focal_loss(
