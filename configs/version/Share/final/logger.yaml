@@ -7,7 +7,7 @@ init_args:
   dir: null
   id: null
   anonymous: null
-  project: 'CVPR'
+  project: 'DFD-FFG(Experiment)'
   log_model: false
   prefix: ''
   checkpoint_name: null
