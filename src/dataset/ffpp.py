@@ -109,9 +109,10 @@ class FFPP(DeepFakeDataset):
 
         # augmentation selections
         logging.debug(f"Augmentations: {str(self.augmentations)}")
+        self.frame_augmentation = None
+        self.video_augmentation = None
         if FFPPAugmentation.NONE in self.augmentations:
-            self.frame_augmentation = None
-            self.video_augmentation = None
+            pass
 
         elif FFPPAugmentation.DEV in self.augmentations:
             self.frame_augmentation = None
@@ -233,8 +234,6 @@ class FFPP(DeepFakeDataset):
             )
 
         elif FFPPAugmentation.NORMAL in self.augmentations:
-            self.frame_augmentation = None
-            self.video_augmentation = None
 
             if FFPPAugmentation.VIDEO in self.augmentations:
                 augmentations = [

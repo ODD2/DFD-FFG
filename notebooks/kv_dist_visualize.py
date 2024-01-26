@@ -86,12 +86,13 @@ def semantic_patch_cos_sim(x, n_patch, part, _s, _l, semantic_patches, s=None, *
                 (
                     torch.nn.functional.cosine_similarity(
                         x,
-                        semantic_patches[_s if s == None else s][part][_l],
+                        vec,
                         dim=-1
                     )
                 )
             ).softmax(dim=-1)
-            .view((-1, n_patch, n_patch))
+            .mean(dim=0)
+            .view((1, n_patch, n_patch))
             .permute(1, 0, 2)
             .flatten(1, 2)
             .unsqueeze(-1)
@@ -107,7 +108,8 @@ def plotter(
     mode="subject-layer",
     unit_size=3,
     font_size=12,
-    plot_params={}
+    plot_params={},
+    save_as=""
 ):
     keys = list(features.keys())
     num_keys = len(keys)
@@ -124,6 +126,8 @@ def plotter(
 
     def show():
         plt.tight_layout()
+        if (len(save_as) > 0):
+            plt.savefig(save_as)
         plt.show()
 
     if mode == "subject-layer":
@@ -131,7 +135,7 @@ def plotter(
         for j, s in enumerate(features.keys()):
             for i, v in enumerate(features[s]):
                 plt.subplot(num_keys, num_layers, j * num_layers + i + 1)
-                plt.title(f"L{i}-{s.upper()}")
+                # plt.title(f"L{i}-{s.upper()}")
                 plt.gca().axis("off")
                 plt.imshow(v, **plot_params)
         show()
@@ -167,6 +171,8 @@ def driver(features, method, subjects=None, n_patch=14, **kargs):
     return r
 
 
+NUM_SAMPLES = 100
+
 # %%
 encoder = VideoAttrExtractor(
     architecture="ViT-L/14",
@@ -195,7 +201,14 @@ dataset = FFPP(
 )
 # %%
 random.seed(1019)
-clip = dataset[random.randint(0, len(dataset))][0][0][0]
+clip = torch.cat(
+    [
+        dataset[random.randint(0, len(dataset))][0][0][0]
+        for _ in range(NUM_SAMPLES)
+    ],
+    dim=0
+)
+
 print(clip[0][0].shape)
 # clip[:, :, 136:196, 72:152] = 0
 # %%
@@ -219,23 +232,59 @@ with open("misc/L14_real_semantic_patches_v2_2000.pickle", "rb") as f:
 
 # %%
 plot_params = dict(vmin=0, vmax=1)
-part = "nose"
+part = "lips"
 # %%
 print(features[0]["q"].shape)
+
 # %%
-evals = driver(features, semantic_patch_cos_sim, part=part, s="q", semantic_patches=semantic_patches, n_patch=n_patch)
-plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
+# evals = driver(features, semantic_patch_cos_sim, part=part, semantic_patches=semantic_patches, n_patch=n_patch)
+# plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
 
-evals = driver(features, semantic_patch_cos_sim, part=part, s="k", semantic_patches=semantic_patches, n_patch=n_patch)
-plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
+# # %%
+# evals = driver(features, semantic_patch_cos_sim, part=part, s="q", semantic_patches=semantic_patches, n_patch=n_patch)
+# plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
+# # %%
+# evals = driver(features, semantic_patch_cos_sim, part=part, s="k", semantic_patches=semantic_patches, n_patch=n_patch)
+# plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
+# # %%
+# evals = driver(features, semantic_patch_cos_sim, part=part, s="v", semantic_patches=semantic_patches, n_patch=n_patch)
+# plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
+# # %%
+# evals = driver(features, semantic_patch_cos_sim, part=part, s="out", semantic_patches=semantic_patches, n_patch=n_patch)
+# plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
+# # %%
+# evals = driver(features, semantic_patch_cos_sim, part=part, s="emb", semantic_patches=semantic_patches, n_patch=n_patch)
+# plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
 
-evals = driver(features, semantic_patch_cos_sim, part=part, s="v", semantic_patches=semantic_patches, n_patch=n_patch)
-plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
 
-evals = driver(features, semantic_patch_cos_sim, part=part, s="out", semantic_patches=semantic_patches, n_patch=n_patch)
-plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
-
-evals = driver(features, semantic_patch_cos_sim, part=part, s="emb", semantic_patches=semantic_patches, n_patch=n_patch)
-plotter(evals, "", "subject-layer", unit_size=2, plot_params=plot_params)
-
+# %%
+evals = {}
+evals["q"] = driver(
+    features, semantic_patch_cos_sim, part=part, s="q",
+    semantic_patches=semantic_patches, n_patch=n_patch
+)["k"][6:24]
+evals["k"] = driver(
+    features, semantic_patch_cos_sim, part=part, s="k",
+    semantic_patches=semantic_patches, n_patch=n_patch
+)["k"][6:24]
+evals["v"] = driver(
+    features, semantic_patch_cos_sim, part=part, s="v",
+    semantic_patches=semantic_patches, n_patch=n_patch
+)["k"][6:24]
+evals["out"] = driver(
+    features, semantic_patch_cos_sim, part=part, s="out",
+    semantic_patches=semantic_patches, n_patch=n_patch
+)["k"][6:24]
+evals["emb"] = driver(
+    features, semantic_patch_cos_sim, part=part, s="emb",
+    semantic_patches=semantic_patches, n_patch=n_patch
+)["k"][6:24]
+plotter(
+    evals,
+    "",
+    "subject-layer",
+    unit_size=2,
+    plot_params=plot_params,
+    save_as="out.pdf"
+)
 # %%

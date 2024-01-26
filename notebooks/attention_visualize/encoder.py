@@ -173,8 +173,8 @@ def draw_flatten_heatmap(relevance: torch.Tensor, scale=500):
 # interpret prediction
 UNIT = 2
 FRAMES = 10
-NUM_BATCHES = 12
-BATCH_SIZE = 1
+NUM_BATCHES = 6
+BATCH_SIZE = 5
 NUM_LAYERS = 24
 
 # sample videos
@@ -218,18 +218,25 @@ model_configs = [
     # ("125", FFGSynoVideoLearner, "logs/DFD-FFG(Experiment)/pvdrbg3m/checkpoints/last.ckpt")
     # ("125", FFGSynoVideoLearner, "logs/DFD-FFG(Experiment)/35g5yvj5/checkpoints/last.ckpt"),
     # ("125", FFGSynoVideoLearner, "logs/DFD-FFG(Experiment)/9uyiv6pc/checkpoints/last.ckpt"),
-    ("125", FFGSynoVideoLearner, "logs/DFD-FFG(Experiment)/kzp2z4pe/checkpoints/last.ckpt")
+    # ("125", FFGSynoVideoLearner, "logs/DFD-FFG(CVPR-EXP)/ib5mz44a/checkpoints/epoch=6-step=1694.ckpt"),
+    # ("125", SynoVideoLearner, "logs/CVPR/vmobdb0k/checkpoints/epoch=9-step=2420.ckpt"),
+    # ("125", FFGSynoVideoLearner, "logs/CVPR/szfhgbkm/checkpoints/epoch=7-step=2040.ckpt"),
+    ("125", FFGSynoVideoLearner, "logs/DFD-FFG(CVPR-EXP)/ib5mz44a/checkpoints/epoch=6-step=1694.ckpt"),
+
+
+
 ]
 
 scenarios = [
     (
         syno,  # syno num
         1,  # logit
-        # ("all", 50000),  # mode,scaler
+        ("all", 50000),  # mode,scaler
         # ("grad", 500),
-        ("cam", 100),
+        # ("cam", 100),
         -1,  # layers(from tail)
-        "layer"  # aspect
+        # "layer"  # aspect
+        "frame"
 
     )
     for syno in [0, 1, 2, 3]
