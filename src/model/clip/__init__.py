@@ -116,6 +116,14 @@ class VideoAttrExtractor(nn.Module):
         return self.model.input_resolution
 
     @property
+    def n_layers(self):
+        return self.model.transformer.layers
+
+    @property
+    def n_heads(self):
+        return self.model.transformer.heads
+
+    @property
     def patch_size(self):
         return self.model.patch_size
 

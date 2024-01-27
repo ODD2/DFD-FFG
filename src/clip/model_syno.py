@@ -10,6 +10,10 @@ from enum import IntEnum, auto, IntFlag
 from collections import OrderedDict
 from typing import Tuple, Union, List
 
+# TODO:
+# - isolate the synoptic side-network into an independent module
+# - we only need the optimized VisionTransformer for video feature extraction.
+
 
 class Bottleneck(nn.Module):
     expansion = 4

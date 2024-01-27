@@ -20,8 +20,6 @@ from src.model.clip import VideoAttrExtractor
 from src.dataset.ffpp import FFPP, FFPPSampleStrategy, FFPPAugmentation
 from sklearn.cluster import KMeans
 
-SAMPLE_NUM = 2000
-
 
 def fetch_semantic_features(
     encoder,
@@ -217,6 +215,7 @@ def fetch_semantic_features(
     return semantic_patches
 
 
+SAMPLE_NUM = 2000
 # %%
 if __name__ == "__main__":
     encoder = VideoAttrExtractor(
