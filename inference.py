@@ -47,6 +47,7 @@ def parse_args(args=None):
     parser.add_argument("--precision", type=int, default=16)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--notes", type=str, default="")
+    parser.add_argument("--no_notify", action="store_true")
     return parser.parse_args(args=args)
 
 
@@ -173,8 +174,9 @@ def main(args=None):
     with open(path.join(root, f'stats_{timestamp}.pickle'), "wb") as f:
         pickle.dump(stats, f)
 
-    send_to_telegram(f"Inference for '{root.split('/')[-2]}' Complete!(notes:{params.notes})")
-    send_to_telegram(json.dumps(report, sort_keys=True, indent=4, separators=(',', ': ')))
+    if (not params.no_notify):
+        send_to_telegram(f"Inference for '{root.split('/')[-2]}' Complete!(notes:{params.notes})")
+        send_to_telegram(json.dumps(report, sort_keys=True, indent=4, separators=(',', ': ')))
 
     return report
 

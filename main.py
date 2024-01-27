@@ -52,7 +52,7 @@ def inference(cli):
         return {}
 
     results = inference_entrypoint(
-        [model_cfg_path, data_cfg_path, ckpt_path]
+        [model_cfg_path, data_cfg_path, ckpt_path, "--no_notify"]
     )
 
     # log inference results
