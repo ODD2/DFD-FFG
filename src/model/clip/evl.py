@@ -508,6 +508,7 @@ class EVLVideoAttrExtractor(VideoAttrExtractor):
         architecture,
         num_frames=1,
         mask_ratio=0.0,
+        decoder_layers=4,
         attn_record=False
     ):
         super(EVLVideoAttrExtractor, self).__init__(
@@ -528,7 +529,7 @@ class EVLVideoAttrExtractor(VideoAttrExtractor):
         self.decoder = EVLDecoder(
             num_frames=num_frames,
             spatial_size=(self.n_patch, self.n_patch),
-            num_layers=self.n_layers,
+            num_layers=decoder_layers,
             in_feature_dim=self.embed_dim,
             qkv_dim=self.embed_dim,
             num_heads=self.n_heads,
@@ -538,6 +539,7 @@ class EVLVideoAttrExtractor(VideoAttrExtractor):
             enable_temporal_cross_attention=True,
             mlp_dropout=0.5
         )
+        self.decoder_layers = decoder_layers
 
     def forward(self, x):
         results = super(EVLVideoAttrExtractor, self).forward(x)
@@ -548,7 +550,7 @@ class EVLVideoAttrExtractor(VideoAttrExtractor):
         #     for k in layer_attrs[i]:
         #         layer_attrs[i][k] = layer_attrs[i][k][:, :, 1:]
 
-        reps = self.decoder(results["layer_attrs"])
+        reps = self.decoder(results["layer_attrs"][-self.decoder_layers:])
         results["reps"] = reps
         return results
 
@@ -612,6 +614,7 @@ class EfficientVideoLearner(ODBinaryMetricClassifier):
         architecture: str = 'ViT-B/16',
         num_frames: int = 1,
         attn_record: bool = False,
+        decoder_layers: int = 4,
 
         is_focal_loss: bool = True,
         mask_ratio: float = 0.0,
@@ -625,7 +628,8 @@ class EfficientVideoLearner(ODBinaryMetricClassifier):
             architecture=architecture,
             attn_record=attn_record,
             num_frames=num_frames,
-            mask_ratio=mask_ratio
+            mask_ratio=mask_ratio,
+            decoder_layers=decoder_layers
         )
         self.model = BinaryLinearClassifier(**params)
         self.label_weights = torch.tensor(label_weights)
