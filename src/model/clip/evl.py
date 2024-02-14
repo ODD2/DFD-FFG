@@ -491,38 +491,18 @@ class EVLDecoder(nn.Module):
 
 
 class EVLVideoAttrExtractor(VideoAttrExtractor):
-    """
-    Deepfake video detector (also a video classifier)
-
-    A series of video frames are first fed into CLIP image encoder
-    we export key and values for each frame in each layer of CLIP ViT
-    these k, v then further flatten on the temporal dimension
-    resulting in a series of tokens for each video.
-
-    The decoder aggregates the exported key and values in an attention manner 
-    a CLS query token is learned during decoding.
-    """
 
     def __init__(
         self,
         architecture,
         num_frames=1,
-        mask_ratio=0.0,
         decoder_layers=4,
         attn_record=False
     ):
         super(EVLVideoAttrExtractor, self).__init__(
             architecture=architecture,
             text_embed=False,
-            num_frames=num_frames,
             store_attrs=["q", "k", "out"],
-            frozen=True,
-            mask_ratio=mask_ratio,
-            is_temporal_conv=False,
-            is_syno_adaptor=False,
-            is_temporal_embedding=False,
-            enable_syno=False,
-            layer_ratio=1,
             attn_record=attn_record
         )
 
@@ -617,7 +597,6 @@ class EfficientVideoLearner(ODBinaryMetricClassifier):
         decoder_layers: int = 4,
 
         is_focal_loss: bool = True,
-        mask_ratio: float = 0.0,
 
         cls_weight: float = 10.0,
         label_weights: List[float] = [1, 1],
@@ -628,7 +607,6 @@ class EfficientVideoLearner(ODBinaryMetricClassifier):
             architecture=architecture,
             attn_record=attn_record,
             num_frames=num_frames,
-            mask_ratio=mask_ratio,
             decoder_layers=decoder_layers
         )
         self.model = BinaryLinearClassifier(**params)
