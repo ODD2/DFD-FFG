@@ -419,7 +419,7 @@ class FFPP(DeepFakeDataset):
     def _build_video_list(self):
         self.video_list = []
 
-        with open(path.join(self.data_dir, 'splits', f'{self.split}.json')) as f:
+        with open(path.join(self.data_dir, 'csv_files', f'{self.split}.json')) as f:
             idxs = json.load(f)
 
         logging.debug(f"DF TYPES:{self.df_types}")

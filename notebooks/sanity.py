@@ -10,6 +10,7 @@ image = Image.open("notebooks/woman.png")
 image = preprocess(image).unsqueeze(0).unsqueeze(0).to(device)
 text = CLIP.tokenize(["a man", "a woman"]).to(device)
 
+print("load complete, start evaluation...")
 with torch.no_grad():
     image_features = model.encode_frames(image)
     text_features = model.encode_text(text)
