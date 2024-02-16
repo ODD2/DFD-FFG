@@ -337,12 +337,10 @@ class VResidualAttentionBlock(nn.Module):
         x = x + data["out"]
         x = x + self.mlp(self.ln_2(x))
 
-        self.set_attr(
-            **data,
-            emb=x
-        )
+        data["emb"] = x
+        self.set_attr(**data)
 
-        return x
+        return data
 
 
 class VTransformer(nn.Module):
@@ -373,7 +371,7 @@ class VTransformer(nn.Module):
 
     def forward(self, x: torch.Tensor):
         for blk in self.resblocks:
-            x = blk(x)
+            x = blk(x)["emb"]
         return x
 
 

@@ -227,6 +227,7 @@ class SynoDecoder(nn.Module):
         is_temporal_embedding=True
     ):
         super().__init__()
+        self.encoder = encoder
         self.patch_num = encoder.patch_num
         self.mask_ratio = mask_ratio
         # encoder modules
@@ -262,7 +263,7 @@ class SynoDecoder(nn.Module):
             for i in range(encoder.transformer.layers)
         ])
 
-    def forward(self, x, layer_attrs):
+    def forward(self, x):
         # training augmentations
         if self.training and self.mask_ratio > 0:
             patch_mask = torch.rand(self.patch_num) < self.mask_ratio
@@ -282,9 +283,15 @@ class SynoDecoder(nn.Module):
 
         te = self.temporal_embedding
 
-        for i, blk in enumerate(self.decoder_layers):
-            s = blk(layer_attrs[i], s, te, patch_mask)
-
+        # first, we prepare the encoder before the transformer layers.
+        x = self.encoder._prepare(x)
+        # now, we alternate between synoptic and encoder layers
+        for enc_blk, dec_blk in zip(self.encoder.transformer.resblocks, self.decoder_layers):
+            data = enc_blk(x)
+            x = data["emb"]
+            s = dec_blk(data, s, te, patch_mask)
+        # last, we are done with the encoder, therefore skipping the _finalize step.
+        # x =  self.encoder._finalize(x)
         s = self.ln_post(s)
 
         if self.proj is not None:
@@ -310,7 +317,6 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         is_syno_adaptor=True,
         is_temporal_embedding=True,
     ):
-        store_attrs = set([*store_attrs, "k", "v"])
         super(SynoVideoAttrExtractor, self).__init__(
             architecture=architecture,
             text_embed=text_embed,
@@ -330,19 +336,19 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         )
 
     def forward(self, x):
-        results = super(SynoVideoAttrExtractor, self).forward(x)
+        synos = self.decoder(x=x)
 
-        synos = self.decoder(
-            x=x,
-            layer_attrs=results["layer_attrs"]
-        )
-
-        for blk, _attrs in zip(self.decoder.decoder_layers, results["layer_attrs"]):
-            attrs = blk.pop_attr()
-            _attrs.update(attrs)
+        layer_attrs = []
+        for enc_blk, dec_blk in zip(self.decoder.decoder_layers, self.model.transformer.resblocks):
+            layer_attrs.append(
+                {
+                    **enc_blk.pop_attr(),
+                    **dec_blk.pop_attr()
+                }
+            )
 
         return dict(
-            **results,
+            layer_attrs=layer_attrs,
             synos=synos
         )
 
