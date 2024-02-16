@@ -423,7 +423,7 @@ class VisionTransformer(nn.Module):
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
-    def forward(self, x: torch.Tensor):
+    def _prepare(self, x: torch.Tensor):
         batch, frames = x.shape[:2]
         # x.shape = [batch,  frames, 3, px, px]
         x = self.conv1(x.flatten(0, 1)).unflatten(0, (batch, frames))
@@ -447,14 +447,23 @@ class VisionTransformer(nn.Module):
         )  # shape = [batch, frames, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
         x = self.ln_pre(x)
+        return x
 
+    def _transformer(self, x: torch.Tensor):
         x = self.transformer(x)
+        return x
 
+    def _finalize(self, x: torch.Tensor):
         x = self.ln_post(x[..., 0, :])
 
         if self.proj is not None:
             x = x @ self.proj
+        return x
 
+    def forward(self, x: torch.Tensor):
+        x = self._prepare(x)
+        x = self._transformer(x)
+        x = self._finalize(x)
         return x
 
 
