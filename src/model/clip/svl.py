@@ -10,9 +10,20 @@ from src.model.base import ODBinaryMetricClassifier
 from src.model.clip import VideoAttrExtractor
 from src.utility.loss import focal_loss
 
+
+def call_module(module):
+    def fn(*args, **kwargs):
+        return module(*args, **kwargs)
+    return fn
+
+
+def get_module(module):
+    def fn():
+        return module
+    return fn
+
+
 # class of per-layer decoder block
-
-
 class SynoBlock(nn.Module):
     def __init__(
         self,
@@ -30,13 +41,13 @@ class SynoBlock(nn.Module):
         self.d_model = d_model
 
         # encoder modules
-        self.ln_1 = encoder_layer.ln_1
-        self.mlp = encoder_layer.mlp
-        self.ln_2 = encoder_layer.ln_2
+        self.ln_1 = call_module(encoder_layer.ln_1)
+        self.mlp = call_module(encoder_layer.mlp)
+        self.ln_2 = call_module(encoder_layer.ln_2)
 
-        self.in_proj_weight = encoder_layer.attn.in_proj_weight
-        self.in_proj_bias = encoder_layer.attn.in_proj_bias
-        self.out_proj = encoder_layer.attn.out_proj
+        self.in_proj_weight = get_module(encoder_layer.attn.in_proj_weight)
+        self.in_proj_bias = get_module(encoder_layer.attn.in_proj_bias)
+        self.out_proj = call_module(encoder_layer.attn.out_proj)
 
         # syno modules
         if (is_syno_adaptor):
@@ -117,8 +128,8 @@ class SynoBlock(nn.Module):
         #  Synoptic Cross-Attention
         s_q, s_k, s_v = F.linear(
             s,
-            self.in_proj_weight,
-            self.in_proj_bias
+            self.in_proj_weight(),
+            self.in_proj_bias()
         ).chunk(3, dim=-1)
 
         view_as = (*s_q.shape[:2], self.n_head, -1)
@@ -130,8 +141,8 @@ class SynoBlock(nn.Module):
         if (not te is None):
             te_q, te_k, te_v = F.linear(
                 te,
-                self.in_proj_weight,
-                self.in_proj_bias
+                self.in_proj_weight(),
+                self.in_proj_bias()
             ).chunk(3, dim=-1)
 
             view_as = (te.shape[0], 1, self.n_head, -1)
@@ -227,13 +238,13 @@ class SynoDecoder(nn.Module):
         is_temporal_embedding=True
     ):
         super().__init__()
-        self.encoder = encoder
+        self.encoder = get_module(encoder)
         self.patch_num = encoder.patch_num
         self.mask_ratio = mask_ratio
         # encoder modules
-        self.ln_pre = encoder.ln_pre
-        self.ln_post = encoder.ln_post
-        self.proj = encoder.proj
+        self.ln_pre = call_module(encoder.ln_pre)
+        self.ln_post = call_module(encoder.ln_post)
+        self.proj = get_module(encoder.proj)
 
         # synoptic
         self.num_synos = num_synos
@@ -284,18 +295,18 @@ class SynoDecoder(nn.Module):
         te = self.temporal_embedding
 
         # first, we prepare the encoder before the transformer layers.
-        x = self.encoder._prepare(x)
+        x = self.encoder()._prepare(x)
         # now, we alternate between synoptic and encoder layers
-        for enc_blk, dec_blk in zip(self.encoder.transformer.resblocks, self.decoder_layers):
+        for enc_blk, dec_blk in zip(self.encoder().transformer.resblocks, self.decoder_layers):
             data = enc_blk(x)
             x = data["emb"]
             s = dec_blk(data, s, te, patch_mask)
         # last, we are done with the encoder, therefore skipping the _finalize step.
-        # x =  self.encoder._finalize(x)
+        # x =  self.encoder()._finalize(x)
         s = self.ln_post(s)
 
-        if self.proj is not None:
-            s = s @ self.proj
+        if self.proj() is not None:
+            s = s @ self.proj()
 
         return s
 
@@ -326,12 +337,12 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         )
         self.decoder = SynoDecoder(
             encoder=self.model,
-            num_frames=num_frames,
             num_synos=num_synos,
+            num_frames=num_frames,
             mask_ratio=mask_ratio,
             store_attrs=store_attrs,
-            is_temporal_conv=is_temporal_conv,
             is_syno_adaptor=is_syno_adaptor,
+            is_temporal_conv=is_temporal_conv,
             is_temporal_embedding=is_temporal_embedding,
         )
 
@@ -339,7 +350,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         synos = self.decoder(x=x)
 
         layer_attrs = []
-        for enc_blk, dec_blk in zip(self.decoder.decoder_layers, self.model.transformer.resblocks):
+        for enc_blk, dec_blk in zip(self.model.transformer.resblocks, self.decoder.decoder_layers):
             layer_attrs.append(
                 {
                     **enc_blk.pop_attr(),
