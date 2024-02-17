@@ -126,9 +126,7 @@ class VideoAttrExtractor(nn.Module):
         )
 
     def train(self, mode=True):
-        super().train(mode)
-        if (mode):
-            self.model.eval()
+        self.model.eval()
         return self
 
 

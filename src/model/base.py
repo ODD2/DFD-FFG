@@ -81,6 +81,9 @@ class ODClassifier(pl.LightningModule):
     def evaluate(self, x, **kargs):
         return self.model(x, **kargs)
 
+    def on_validation_model_train(self):
+        self.model.train()
+
 
 class ODBinaryMetricClassifier(ODClassifier):
     def __init__(self):
@@ -92,8 +95,8 @@ class ODBinaryMetricClassifier(ODClassifier):
             "cm": partial(BinaryConfusionMatrix, normalize="true"),
             "ap": partial(AveragePrecision, task="BINARY", num_classes=2),
             "loss": MeanMetric,
-            "stats/real": GenericStatistics,
-            "stats/fake": GenericStatistics
+            # "stats/real": GenericStatistics,
+            # "stats/fake": GenericStatistics
         }
 
     def get_metric(self, dts_name, metric_name, device):
@@ -121,8 +124,8 @@ class ODBinaryMetricClassifier(ODClassifier):
         self.get_metric(result['dts_name'], 'cm', logits.device).update(logits[:, 1], labels)
         self.get_metric(result['dts_name'], 'loss', logits.device).update(loss)
         labels = labels.to(dtype=bool)
-        self.get_metric(result['dts_name'], 'stats/real', logits.device).update(logits[~labels, 0])
-        self.get_metric(result['dts_name'], 'stats/fake', logits.device).update(logits[labels, 1])
+        # self.get_metric(result['dts_name'], 'stats/real', logits.device).update(logits[~labels, 0])
+        # self.get_metric(result['dts_name'], 'stats/fake', logits.device).update(logits[labels, 1])
 
     def shared_beg_epoch_procedure(self, phase):
         self.reset_metrics()

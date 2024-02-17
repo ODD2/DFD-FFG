@@ -356,9 +356,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         super().train(mode)
         if (mode):
             self.model.eval()
-            for module in self.model.tuneable_modules():
-                if (issubclass(type(module), torch.nn.Module)):
-                    module.train()
+            self.decoder.train()
         return self
 
 
