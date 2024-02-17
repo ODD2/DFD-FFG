@@ -47,7 +47,7 @@ def parse_args(args=None):
     parser.add_argument("--precision", type=int, default=16)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--notes", type=str, default="")
-    parser.add_argument("--no_notify", action="store_true")
+    parser.add_argument("--no-notify", action="store_true")
     return parser.parse_args(args=args)
 
 
