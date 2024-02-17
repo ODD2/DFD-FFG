@@ -92,7 +92,13 @@ def main(args=None):
 
     # setup model
     model = cli.model
-    model = model.__class__.load_from_checkpoint(params.ckpt_path, strict=False)
+    try:
+        model = model.__class__.load_from_checkpoint(params.ckpt_path)
+    except Exception as e:
+        print(f"Unable to load model from checkpoint in strict mode: {e}")
+        print(f"Loading model from checkpoint in non-strict mode.")
+        model = model.__class__.load_from_checkpoint(params.ckpt_path, strict=False)
+
     model = model.to(device)
     model.eval()
 
