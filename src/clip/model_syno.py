@@ -232,8 +232,8 @@ class MultiheadAttentionAttrExtract(nn.Module):
     ):
         super().__init__()
 
-        self.in_proj_weight = nn.Parameter(torch.empty((3 * embed_dim, embed_dim)))
-        self.in_proj_bias = nn.Parameter(torch.empty(3 * embed_dim))
+        self.in_proj_weight = nn.Parameter(torch.randn((3 * embed_dim, embed_dim)))
+        self.in_proj_bias = nn.Parameter(torch.randn(3 * embed_dim))
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
         self.n_head = n_head

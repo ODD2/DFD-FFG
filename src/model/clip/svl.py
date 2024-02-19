@@ -6,9 +6,11 @@ import torch.nn.functional as F
 
 from typing import List
 
-from src.model.base import ODBinaryMetricClassifier
-from src.model.clip import VideoAttrExtractor
+
 from src.utility.loss import focal_loss
+from src.model.clip import VideoAttrExtractor
+from src.model.base import ODBinaryMetricClassifier
+from src.clip.model_syno import MultiheadAttentionAttrExtract
 
 
 def call_module(module):
@@ -119,7 +121,16 @@ class SynoDecoder(nn.Module):
             for _ in range(encoder.transformer.layers)
         ])
 
+        self.ln_pre = nn.LayerNorm(encoder.patch_num)
+        self.cls_embedding = nn.Parameter(torch.randn(1, 1, encoder.patch_num))
+        self.aggregator = MultiheadAttentionAttrExtract(
+            embed_dim=encoder.patch_num,
+            n_head=4,
+            attn_record=False
+        )
+
     def forward(self, x):
+        b = x.shape[0]
         # first, we prepare the encoder before the transformer layers.
         x = self.encoder()._prepare(x)
         out = []
@@ -130,7 +141,18 @@ class SynoDecoder(nn.Module):
             out.append(dec_blk(data))
         # last, we are done with the encoder, therefore skipping the _finalize step.
         # x =  self.encoder()._finalize(x)
-        out = torch.stack(out, dim=1)
+        out = torch.cat(
+            [
+                self.cls_embedding.repeat((b, 1, 1)),
+                torch.stack(out, dim=1)
+            ],
+            dim=1
+        ).unsqueeze(1)
+
+        out = self.ln_pre(out)
+        out = self.aggregator(out)["out"]
+        out = out[:, :, 0].flatten(-2)
+
         return out
 
 
@@ -223,7 +245,7 @@ class BinaryLinearClassifier(nn.Module):
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
         synos = results["synos"]
-        logits = self.head(synos.mean(1))
+        logits = self.head(synos)
         return dict(
             logits=logits,
             ** results
