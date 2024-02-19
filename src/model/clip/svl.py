@@ -45,7 +45,7 @@ class GlitchBlock(nn.Module):
         )
         self.p_conv = self.make_2dconv(
             ksize,
-            ((n_frames - ksize // 2 + 1)**2) * n_filt,
+            (n_frames ** 2) * n_filt,
             1
         )
 
@@ -55,7 +55,7 @@ class GlitchBlock(nn.Module):
             out_channels=out_c,
             kernel_size=ksize,
             stride=1,
-            padding=1,
+            padding=ksize // 2,
             groups=groups,
             bias=True
         )
@@ -72,7 +72,6 @@ class GlitchBlock(nn.Module):
 
         b, t, l, h, d = _q.shape
         p = self.n_patch  # p = l ** 0.5
-        z = t - self.ksize // 2 + 1
 
         _q = _q.permute(0, 2, 1, 3, 4)
         _k = _k.permute(0, 2, 1, 3, 4)
@@ -85,13 +84,13 @@ class GlitchBlock(nn.Module):
 
         aff = aff.softmax(dim=-2)
 
-        aff = aff.flatten(0, 1)  # shape = (n*l,q,k,h), where q and k equals t
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,q,k)
+        aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
+        aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
 
-        aff = self.t_conv(aff)  # shape = (n*l, r, z, z), where r = n_n_filter
+        aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
 
-        aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, r*z*z)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n, r*z*z, p, p)
+        aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, r*t*t)
+        aff = aff.permute(0, 3, 1, 2)  # shape = (n, r*t*t, p, p)
 
         aff = self.p_conv(aff)  # shape = (n, 1, p, p)
 
@@ -102,7 +101,9 @@ class SynoDecoder(nn.Module):
     def __init__(
         self,
         encoder,
-        num_frames
+        num_frames,
+        num_filters,
+        kernel_size,
     ):
         super().__init__()
         self.encoder = get_module(encoder)
@@ -111,9 +112,9 @@ class SynoDecoder(nn.Module):
             GlitchBlock(
                 n_head=encoder.transformer.heads,
                 n_patch=int((encoder.patch_num)**0.5),
-                n_filt=10,
+                n_filt=num_filters,
                 n_frames=num_frames,
-                ksize=3
+                ksize=kernel_size
             )
             for _ in range(encoder.transformer.layers)
         ])
@@ -143,7 +144,9 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         store_attrs=[],
         attn_record=False,
         # synoptic
-        num_frames=1
+        num_frames=1,
+        num_filters=10,
+        kernel_size=3
     ):
         super(SynoVideoAttrExtractor, self).__init__(
             architecture=architecture,
@@ -154,7 +157,9 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         )
         self.decoder = SynoDecoder(
             encoder=self.model,
-            num_frames=num_frames
+            num_frames=num_frames,
+            num_filters=num_filters,
+            kernel_size=kernel_size
         )
 
         self.feat_dim = self.model.patch_num
@@ -229,6 +234,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
         num_frames: int = 1,
+        num_filters: int = 10,
+        kernel_size: int = 3,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
         pretrain: str = None,
@@ -249,6 +256,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             attn_record=attn_record,
             pretrain=pretrain,
             num_frames=num_frames,
+            num_filters=num_filters,
+            kernel_size=kernel_size,
             store_attrs=store_attrs,
         )
         self.model = BinaryLinearClassifier(**params)
