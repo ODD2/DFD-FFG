@@ -40,14 +40,27 @@ class GlitchBlock(nn.Module):
         self.ksize = ksize
         self.n_patch = n_patch
 
+
+class SynoDecoder(nn.Module):
+    def __init__(
+        self,
+        encoder,
+        num_frames,
+        num_filters,
+        kernel_size,
+    ):
+        super().__init__()
+        self.encoder = get_module(encoder)
+        h = encoder.transformer.heads
+        L = encoder.transformer.layers
         self.t_conv = self.make_2dconv(
-            ksize,
-            n_head,
-            n_filt
+            kernel_size,
+            h * L,
+            num_filters
         )
         self.p_conv = self.make_2dconv(
-            ksize,
-            (n_frames ** 2) * n_filt,
+            kernel_size,
+            (num_frames ** 2) * num_filters,
             1
         )
 
@@ -67,13 +80,10 @@ class GlitchBlock(nn.Module):
 
         return conv
 
-    def forward(self, attrs):
-
+    def attn_map(self, attrs):
+        # shape = (b,t,l,h,d)
         _q = attrs['q'][:, :, 1:]
         _k = attrs['k'][:, :, 1:]  # ignore cls token
-
-        b, t, l, h, d = _q.shape
-        p = self.n_patch  # p = l ** 0.5
 
         _q = _q.permute(0, 2, 1, 3, 4)
         _k = _k.permute(0, 2, 1, 3, 4)
@@ -84,76 +94,33 @@ class GlitchBlock(nn.Module):
             _k
         )
 
-        aff = aff.softmax(dim=-2)
+        aff = aff.softmax(dim=-2)  # shape = (n,l,t,t,h)
+        aff = aff.permute(0, 1, 4, 2, 3)  # shape = (n,l,h,t,t)
 
-        aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
-
-        aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
-
-        aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, r*t*t)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n, r*t*t, p, p)
-
-        aff = self.p_conv(aff)  # shape = (n, 1, p, p)
-
-        return aff.flatten(1)  # shape = (n, p*p)
-
-
-class SynoDecoder(nn.Module):
-    def __init__(
-        self,
-        encoder,
-        num_frames,
-        num_filters,
-        kernel_size,
-    ):
-        super().__init__()
-        self.encoder = get_module(encoder)
-
-        self.decoder_layers = nn.ModuleList([
-            GlitchBlock(
-                n_head=encoder.transformer.heads,
-                n_patch=int((encoder.patch_num)**0.5),
-                n_filt=num_filters,
-                n_frames=num_frames,
-                ksize=kernel_size
-            )
-            for _ in range(encoder.transformer.layers)
-        ])
-
-        self.ln_pre = nn.LayerNorm(encoder.patch_num)
-        self.cls_embedding = nn.Parameter(torch.randn(1, 1, encoder.patch_num))
-        self.aggregator = MultiheadAttentionAttrExtract(
-            embed_dim=encoder.patch_num,
-            n_head=4,
-            attn_record=False
-        )
+        return aff
 
     def forward(self, x):
-        b = x.shape[0]
         # first, we prepare the encoder before the transformer layers.
         x = self.encoder()._prepare(x)
         out = []
         # now, we alternate between synoptic and encoder layers
-        for enc_blk, dec_blk in zip(self.encoder().transformer.resblocks, self.decoder_layers):
+        for enc_blk in self.encoder().transformer.resblocks:
             data = enc_blk(x)
             x = data["emb"]
-            out.append(dec_blk(data))
+            out.append(self.attn_map(data))
         # last, we are done with the encoder, therefore skipping the _finalize step.
         # x =  self.encoder()._finalize(x)
-        out = torch.cat(
-            [
-                self.cls_embedding.repeat((b, 1, 1)),
-                torch.stack(out, dim=1)
-            ],
-            dim=1
-        ).unsqueeze(1)
 
-        out = self.ln_pre(out)
-        out = self.aggregator(out)["out"]
-        out = out[:, :, 0].flatten(-2)
+        out = torch.cat(out, dim=2)  # shape = (b,l,h*L,t,t)
+        b, p = out.shape[0], int(out.shape[1]**0.5)
+        out = out.flatten(0, 1)  # shape = (b*l,h*L,t,t)
 
-        return out
+        out = self.t_conv(out)  # shape = (b*l,r,t,t)
+        out = out.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, r*t*t)
+        out = out.permute(0, 3, 1, 2)  # shape = (n, r*t*t, p, p)
+        out = self.p_conv(out)  # shape = (n, 1, p, p)
+
+        return out.flatten(1)  # shape = (n, p*p)
 
 
 class SynoVideoAttrExtractor(VideoAttrExtractor):
