@@ -48,10 +48,9 @@ class GlitchBlock(nn.Module):
             n_head,
             n_filt
         )
-        self.p_conv = self.make_2dconv(
-            ksize,
-            (n_frames ** 2) * n_filt,
-            1
+
+        self.p_proj = nn.Linear(
+            n_frames * n_frames * n_filt, 1
         )
 
     def make_2dconv(self, ksize, in_c, out_c, groups=1):
@@ -95,9 +94,7 @@ class GlitchBlock(nn.Module):
         aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
 
         aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, r*t*t)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n, r*t*t, p, p)
-
-        aff = self.p_conv(aff)  # shape = (n, 1, p, p)
+        aff = self.p_proj(aff)
 
         return aff.flatten(1)  # shape = (n, p*p)
 
@@ -249,8 +246,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         num_frames: int = 1,
         num_filters: int = 10,
         kernel_size: int = 3,
-        q_attr="q",
-        k_attr="k",
+        q_attr: str = "q",
+        k_attr: str = "k",
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
         pretrain: str = None,
