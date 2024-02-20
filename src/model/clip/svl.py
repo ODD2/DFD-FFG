@@ -43,14 +43,9 @@ class GlitchBlock(nn.Module):
         self.q_attr = q_attr
         self.k_attr = k_attr
 
-        self.t_conv = self.make_2dconv(
-            ksize,
-            n_head,
-            n_filt
-        )
         self.p_conv = self.make_2dconv(
             ksize,
-            (n_frames ** 2) * n_filt,
+            (n_frames ** 2) * n_head,
             1
         )
 
@@ -88,15 +83,8 @@ class GlitchBlock(nn.Module):
         )
 
         aff = aff.softmax(dim=-2)
-
-        aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
-
-        aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
-
-        aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, r*t*t)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n, r*t*t, p, p)
-
+        aff = aff.unflatten(1, (p, p)).flatten(3)  # shape = (n, p, p, h*t*t)
+        aff = aff.permute(0, 3, 1, 2)  # shape = (n, h*t*t, p, p)
         aff = self.p_conv(aff)  # shape = (n, 1, p, p)
 
         return aff.flatten(1)  # shape = (n, p*p)
