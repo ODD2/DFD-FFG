@@ -133,6 +133,10 @@ class SynoDecoder(nn.Module):
             for _ in range(self.n_decoder_layers)
         ])
 
+        self.layer_aggregator = nn.Parameter(
+            torch.ones(self.n_decoder_layers, 1) / self.n_decoder_layers
+        )
+
     def forward(self, x):
         # first, we prepare the encoder before the transformer layers.
         x = self.encoder()._prepare(x)
@@ -147,7 +151,10 @@ class SynoDecoder(nn.Module):
             out.append(dec_blk(data))
         # last, we are done with the encoder, therefore skipping the _finalize step.
         # x =  self.encoder()._finalize(x)
-        out = torch.stack(out, dim=1)
+
+        out = (torch.stack(out, dim=-1) @ self.layer_aggregator)
+        out = out.squeeze(-1)
+
         return out
 
 
@@ -246,7 +253,7 @@ class BinaryLinearClassifier(nn.Module):
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
         synos = results["synos"]
-        logits = self.head(synos.mean(1))
+        logits = self.head(synos)
         return dict(
             logits=logits,
             ** results
