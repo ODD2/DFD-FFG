@@ -110,10 +110,15 @@ class SynoDecoder(nn.Module):
         num_filters,
         kernel_size,
         q_attr,
-        k_attr
+        k_attr,
+        decode_ratio
     ):
         super().__init__()
         self.encoder = get_module(encoder)
+
+        n_layers = round(encoder.transformer.layers * decode_ratio)
+        assert n_layers > 0
+        self.n_decoder_layers = n_layers
 
         self.decoder_layers = nn.ModuleList([
             GlitchBlock(
@@ -125,7 +130,7 @@ class SynoDecoder(nn.Module):
                 q_attr=q_attr,
                 k_attr=k_attr
             )
-            for _ in range(encoder.transformer.layers)
+            for _ in range(self.n_decoder_layers)
         ])
 
     def forward(self, x):
@@ -133,7 +138,10 @@ class SynoDecoder(nn.Module):
         x = self.encoder()._prepare(x)
         out = []
         # now, we alternate between synoptic and encoder layers
-        for enc_blk, dec_blk in zip(self.encoder().transformer.resblocks, self.decoder_layers):
+        for enc_blk, dec_blk in zip(
+            self.encoder().transformer.resblocks[:self.n_decoder_layers],
+            self.decoder_layers
+        ):
             data = enc_blk(x)
             x = data["emb"]
             out.append(dec_blk(data))
@@ -157,7 +165,8 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         num_filters=10,
         kernel_size=3,
         q_attr="q",
-        k_attr="k"
+        k_attr="k",
+        decode_ratio=1
     ):
         super(SynoVideoAttrExtractor, self).__init__(
             architecture=architecture,
@@ -172,7 +181,8 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             num_filters=num_filters,
             kernel_size=kernel_size,
             q_attr=q_attr,
-            k_attr=k_attr
+            k_attr=k_attr,
+            decode_ratio=decode_ratio
         )
 
         self.feat_dim = self.model.patch_num
@@ -249,8 +259,9 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         num_frames: int = 1,
         num_filters: int = 10,
         kernel_size: int = 3,
-        q_attr="q",
-        k_attr="k",
+        q_attr: str = "q",
+        k_attr: str = "k",
+        decode_ratio: float = 1.0,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
         pretrain: str = None,
@@ -275,7 +286,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             kernel_size=kernel_size,
             store_attrs=store_attrs,
             q_attr=q_attr,
-            k_attr=k_attr
+            k_attr=k_attr,
+            decode_ratio=decode_ratio
         )
         self.model = BinaryLinearClassifier(**params)
 
