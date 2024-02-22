@@ -23,26 +23,32 @@ def get_module(module):
     return fn
 
 
-class GlitchBlock(nn.Module):
+class SynoBlock(nn.Module):
     def __init__(
         self,
+        d_model,
         n_head,
         n_patch,
         n_filt,
         n_frames,
         ksize,
-        q_attr,
-        k_attr,
-
+        t_q_attr,
+        t_k_attr,
+        s_k_attr,
+        s_v_attr,
+        store_attrs=[],
+        attn_record=False
     ):
         super().__init__()
 
-        self.n_head = n_head
-        self.ksize = ksize
+        # parameters
         self.n_patch = n_patch
-        self.q_attr = q_attr
-        self.k_attr = k_attr
+        self.t_q_attr = t_q_attr
+        self.t_k_attr = t_k_attr
+        self.s_k_attr = s_k_attr
+        self.s_v_attr = s_v_attr
 
+        # modules
         self.t_conv = self.make_2dconv(
             ksize,
             n_head,
@@ -53,6 +59,16 @@ class GlitchBlock(nn.Module):
             (n_frames ** 2) * n_filt,
             1
         )
+
+        self.s_proj = nn.Linear(d_model, d_model, bias=True)
+
+        # attribute storage
+        self.store_attrs = store_attrs
+        self.attr = {}
+
+        # attention map recording
+        self.attn_record = attn_record
+        self.aff = None
 
     def make_2dconv(self, ksize, in_c, out_c, groups=1):
         conv = nn.Conv2d(
@@ -70,13 +86,27 @@ class GlitchBlock(nn.Module):
 
         return conv
 
-    def forward(self, attrs):
+    def pop_attr(self):
+        ret = self.get_attr()
+        self.attr.clear()
+        return ret
 
-        _q = attrs[self.q_attr][:, :, 1:]
-        _k = attrs[self.k_attr][:, :, 1:]  # ignore cls token
+    def get_attr(self):
+        return {k: self.attr[k] for k in self.attr}
 
-        b, t, l, h, d = _q.shape
+    def set_attr(self, **attr):
+        self.attr = {
+            k: attr[k]
+            for k in attr
+            if k in self.store_attrs
+        }
+
+    def temporal_detection(self, attrs):
+        b, t, l, h, d = attrs['q'][:, :, 1:].shape  # ignore cls token
         p = self.n_patch  # p = l ** 0.5
+
+        _q = attrs[self.t_q_attr][:, :, 1:]  # ignore cls token
+        _k = attrs[self.t_k_attr][:, :, 1:]  # ignore cls token
 
         _q = _q.permute(0, 2, 1, 3, 4)
         _k = _k.permute(0, 2, 1, 3, 4)
@@ -99,48 +129,115 @@ class GlitchBlock(nn.Module):
 
         aff = self.p_conv(aff)  # shape = (n, 1, p, p)
 
-        return aff.flatten(1)  # shape = (n, p*p)
+        y = aff.flatten(1)
+        return dict(y=y)  # shape = (n, p*p)
+
+    def spatial_detection(self, attrs, s):
+        b, t, l, h, d = attrs['q'][:, :, 1:].shape  # ignore cls token
+
+        _k = attrs[self.s_k_attr][:, :, 1:]  # ignore cls token
+        _v = attrs[self.s_v_attr][:, :, 1:]  # ignore cls token
+
+        s_q = self.s_proj(s)  # prepare query
+
+
+        if (len(_k.shape) ==5):
+            _k = _k.flatten(-2) # match shape
+
+        s_aff = torch.einsum(
+            'nqw,ntkw->ntqk',
+            s_q / (s_q.size(-1) ** 0.5),
+            _k
+        )
+
+        s_aff = s_aff.softmax(dim=-1)
+
+        s_mix = torch.einsum('ntql,ntlw->ntqw', s_aff, _v)
+
+        y = s_mix.flatten(1, 2).mean(dim=1)  # shape = (b,w)
+
+        return dict(s_q=s_q, y=y)
+
+    def forward(self, attrs, s):
+        self.pop_attr()
+        ret_t = self.temporal_detection(attrs)
+        ret_s = self.spatial_detection(attrs, s)
+        y_t = ret_t.pop('y')
+        y_s = ret_s.pop('y')
+        self.set_attr(
+            **ret_s,
+            **ret_t
+        )
+
+        y = torch.cat([y_t, y_s], dim=-1)
+
+        return y
 
 
 class SynoDecoder(nn.Module):
     def __init__(
         self,
         encoder,
+        num_synos,
         num_frames,
         num_filters,
         kernel_size,
-        q_attr,
-        k_attr
+        t_q_attr,
+        t_k_attr,
+        s_k_attr,
+        s_v_attr,
+        store_attrs=[]
     ):
         super().__init__()
         self.encoder = get_module(encoder)
 
         self.decoder_layers = nn.ModuleList([
-            GlitchBlock(
+            SynoBlock(
+                d_model=encoder.transformer.width,
                 n_head=encoder.transformer.heads,
                 n_patch=int((encoder.patch_num)**0.5),
                 n_filt=num_filters,
                 n_frames=num_frames,
                 ksize=kernel_size,
-                q_attr=q_attr,
-                k_attr=k_attr
+                t_q_attr=t_q_attr,
+                t_k_attr=t_k_attr,
+                s_k_attr=s_k_attr,
+                s_v_attr=s_v_attr,
+                store_attrs=store_attrs
             )
             for _ in range(encoder.transformer.layers)
         ])
+        self.syno_embedding = nn.Parameter(
+            torch.zeros(num_synos, encoder.transformer.width)
+        )
+
+        self.feat_dim = encoder.patch_num + encoder.transformer.width
 
     def forward(self, x):
+        b = x.shape[0]
+        layer_output = []
+        syno_emb = self.syno_embedding.unsqueeze(0).repeat(b, 1, 1)  # shape = (b, synos, width)
+
         # first, we prepare the encoder before the transformer layers.
         x = self.encoder()._prepare(x)
-        out = []
+
         # now, we alternate between synoptic and encoder layers
-        for enc_blk, dec_blk in zip(self.encoder().transformer.resblocks, self.decoder_layers):
+        for enc_blk, dec_blk in zip(
+            self.encoder().transformer.resblocks,
+            self.decoder_layers
+        ):
             data = enc_blk(x)
             x = data["emb"]
-            out.append(dec_blk(data))
+            layer_output.append(dec_blk(data, syno_emb))
+
         # last, we are done with the encoder, therefore skipping the _finalize step.
         # x =  self.encoder()._finalize(x)
-        out = torch.stack(out, dim=1)
-        return out
+
+        # aggregate the layer outputs
+        syno = sum(layer_output)
+
+        # return decoded feature
+        return syno
 
 
 class SynoVideoAttrExtractor(VideoAttrExtractor):
@@ -153,11 +250,14 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         store_attrs=[],
         attn_record=False,
         # synoptic
+        num_synos=1,
         num_frames=1,
         num_filters=10,
         kernel_size=3,
-        q_attr="q",
-        k_attr="k"
+        t_q_attr="q",
+        t_k_attr="k",
+        s_k_attr="k",
+        s_v_attr="v",
     ):
         super(SynoVideoAttrExtractor, self).__init__(
             architecture=architecture,
@@ -168,23 +268,28 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         )
         self.decoder = SynoDecoder(
             encoder=self.model,
+            num_synos=num_synos,
             num_frames=num_frames,
             num_filters=num_filters,
             kernel_size=kernel_size,
-            q_attr=q_attr,
-            k_attr=k_attr
+            t_q_attr=t_q_attr,
+            t_k_attr=t_k_attr,
+            s_k_attr=s_k_attr,
+            s_v_attr=s_v_attr,
+            store_attrs=store_attrs
         )
 
-        self.feat_dim = self.model.patch_num
+        self.feat_dim = self.decoder.feat_dim
 
     def forward(self, x):
         synos = self.decoder(x=x)
 
         layer_attrs = []
-        for enc_blk in self.model.transformer.resblocks:
+        for enc_blk, dec_blk in zip(self.model.transformer.resblocks, self.decoder.decoder_layers):
             layer_attrs.append(
                 {
-                    **enc_blk.pop_attr()
+                    **enc_blk.pop_attr(),
+                    **dec_blk.pop_attr()
                 }
             )
 
@@ -236,7 +341,7 @@ class BinaryLinearClassifier(nn.Module):
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
         synos = results["synos"]
-        logits = self.head(synos.mean(1))
+        logits = self.head(synos)
         return dict(
             logits=logits,
             ** results
@@ -246,11 +351,14 @@ class BinaryLinearClassifier(nn.Module):
 class SynoVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
+        num_synos: int = 1,
         num_frames: int = 1,
         num_filters: int = 10,
         kernel_size: int = 3,
-        q_attr="q",
-        k_attr="k",
+        t_q_attr: str = "q",
+        t_k_attr: str = "k",
+        s_k_attr: str = "k",
+        s_v_attr: str = "v",
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
         pretrain: str = None,
@@ -270,12 +378,15 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             text_embed=text_embed,
             attn_record=attn_record,
             pretrain=pretrain,
+            num_synos=num_synos,
             num_frames=num_frames,
             num_filters=num_filters,
             kernel_size=kernel_size,
             store_attrs=store_attrs,
-            q_attr=q_attr,
-            k_attr=k_attr
+            t_q_attr=t_q_attr,
+            t_k_attr=t_k_attr,
+            s_k_attr=s_k_attr,
+            s_v_attr=s_v_attr
         )
         self.model = BinaryLinearClassifier(**params)
 
@@ -369,19 +480,22 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         ffg_reverse: bool = False,
 
         # generic
-        num_frames: int = 1,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
         pretrain: str = None,
+
+        num_frames: int = 1,
+        num_filters: int = 10,
+        kernel_size: int = 3,
+        t_q_attr: str = "q",
+        t_k_attr: str = "k",
+        s_k_attr: str = "k",
+        s_v_attr: str = "v",
 
         attn_record: bool = False,
 
         store_attrs: List[str] = [],
         is_focal_loss: bool = True,
-        is_syno_adaptor: bool = True,
-        is_temporal_conv: bool = True,
-        is_temporal_embedding: bool = True,
-        mask_ratio: float = 0.3,
 
         cls_weight: float = 10.0,
         label_weights: List[float] = [1, 1],
@@ -397,18 +511,20 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         super().__init__(
             num_frames=num_frames,
             num_synos=self.num_face_parts,
+            num_filters=num_filters,
+            kernel_size=kernel_size,
+            t_q_attr=t_q_attr,
+            t_k_attr=t_k_attr,
+            s_k_attr=s_k_attr,
+            s_v_attr=s_v_attr,
             architecture=architecture,
             text_embed=text_embed,
             attn_record=attn_record,
             pretrain=pretrain,
             store_attrs=set([*store_attrs, self.syno_attn_attr]),
-            mask_ratio=mask_ratio,
             cls_weight=cls_weight,
             label_weights=label_weights,
-            is_focal_loss=is_focal_loss,
-            is_syno_adaptor=is_syno_adaptor,
-            is_temporal_conv=is_temporal_conv,
-            is_temporal_embedding=is_temporal_embedding
+            is_focal_loss=is_focal_loss
         )
 
         self.save_hyperparameters()
