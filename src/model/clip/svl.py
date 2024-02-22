@@ -1,6 +1,7 @@
 import wandb
 import torch
 import pickle
+import random
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -375,12 +376,9 @@ class BinaryLinearClassifier(nn.Module):
         logits_s = self.s_head(results["syno_s"])
         logits_t = self.t_head(results["syno_t"])
 
-        logits_s = (logits_s / logits_s.norm(dim=-1, keepdim=True)) * 3
-        logits_t = (logits_t / logits_t.norm(dim=-1, keepdim=True)) * 3
-        logits = logits_s + logits_t
-
         return dict(
-            logits=logits,
+            logits_s=logits_s,
+            logits_t=logits_t,
             ** results
         )
 
@@ -446,10 +444,12 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         names = batch["names"]
 
         output = self(x, **z)
-        logits = output["logits"]
+        logits_s = output["logits_s"]
+        logits_t = output["logits_t"]
         loss = 0
         # classification loss
         if (stage == "train"):
+            logits = logits_s if random.random() > 0.5 else logits_t
             if self.is_focal_loss:
                 cls_loss = focal_loss(
                     logits,
@@ -479,6 +479,11 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
                 batch_size=logits.shape[0]
             )
         else:
+            logits = torch.log(
+                1e-4 +
+                logits_s.softmax(dim=-1) * 0.5 +
+                logits_t.softmax(dim=-1) * 0.5
+            )
             # classification loss
             cls_loss = nn.functional.cross_entropy(
                 logits,
