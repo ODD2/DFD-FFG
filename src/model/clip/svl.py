@@ -219,6 +219,17 @@ class SynoDecoder(nn.Module):
         self.s_ln_post = nn.LayerNorm(d_model)
         self.feat_dim = (d_model // 8)
 
+        self.feat_t_dim = n_patch**2
+        self.feat_s_dim = d_model
+
+    @property
+    def spatial_dim(self):
+        return self.feat_s_dim
+
+    @property
+    def temporal_dim(self):
+        return self.feat_t_dim
+
     def forward(self, x):
         b = x.shape[0]
         layer_output = dict(
@@ -248,13 +259,7 @@ class SynoDecoder(nn.Module):
         y_s = sum(layer_output["y_s"])
         y_t = sum(layer_output["y_t"])
 
-        # align into uni-space
-        syno = (
-            self.s_emb_post(self.s_ln_post(y_s)) +
-            self.t_emb_post(self.t_ln_post(y_t))
-        )
-
-        return syno
+        return y_s, y_t
 
 
 class SynoVideoAttrExtractor(VideoAttrExtractor):
@@ -298,8 +303,16 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
 
         self.feat_dim = self.decoder.feat_dim
 
+    @property
+    def spatial_dim(self):
+        return self.decoder.spatial_dim
+
+    @property
+    def temporal_dim(self):
+        return self.decoder.temporal_dim
+
     def forward(self, x):
-        synos = self.decoder(x=x)
+        syno_s, syno_t = self.decoder(x=x)
 
         layer_attrs = []
         for enc_blk, dec_blk in zip(self.model.transformer.resblocks, self.decoder.decoder_layers):
@@ -312,7 +325,8 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
 
         return dict(
             layer_attrs=layer_attrs,
-            synos=synos
+            syno_s=syno_s,
+            syno_t=syno_t
         )
 
     def train(self, mode=True):
@@ -335,7 +349,8 @@ class BinaryLinearClassifier(nn.Module):
             **kargs
         )
 
-        self.head = self.make_linear(self.encoder.embed_dim)
+        self.s_head = self.make_linear(self.encoder.spatial_dim)
+        self.t_head = self.make_linear(self.encoder.temporal_dim)
 
     def make_linear(self, embed_dim):
         linear = nn.Linear(
@@ -357,8 +372,13 @@ class BinaryLinearClassifier(nn.Module):
 
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
-        synos = results["synos"]
-        logits = self.head(synos)
+        logits_s = self.s_head(results["syno_s"])
+        logits_t = self.t_head(results["syno_t"])
+
+        logits_s = (logits_s / logits_s.norm(dim=-1, keepdim=True)) * 3
+        logits_t = (logits_t / logits_t.norm(dim=-1, keepdim=True)) * 3
+        logits = logits_s + logits_t
+
         return dict(
             logits=logits,
             ** results
