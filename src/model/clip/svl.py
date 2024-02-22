@@ -23,81 +23,60 @@ def get_module(module):
     return fn
 
 
+def make_adaptor(d_model):
+    ln = nn.LayerNorm(d_model)
+    linear1 = nn.Linear(
+        d_model,
+        d_model // 8,
+        bias=False
+    )
+    ln = nn.LayerNorm(d_model)
+    linear2 = nn.Linear(
+        d_model // 8,
+        d_model,
+        bias=False
+    )
+
+    nn.init.normal_(linear1.weight, std=0.001)
+    nn.init.normal_(linear2.weight, std=0.001)
+    return [ln, linear1, linear2]
+
+
 # class of per-layer decoder block
 class SynoBlock(nn.Module):
     def __init__(
         self,
         n_head,
         d_model,
-        encoder_layer,
+        n_frame,
+        ksize=3,
+        n_filter=1,
         store_attrs=[],
-        is_syno_adaptor=True,
-        is_temporal_conv=True,
-        is_temporal_embedding=True,
+
     ):
         super().__init__()
 
         self.n_head = n_head
         self.d_model = d_model
 
-        # encoder modules
-        self.ln_1 = call_module(encoder_layer.ln_1)
-        self.mlp = call_module(encoder_layer.mlp)
-        self.ln_2 = call_module(encoder_layer.ln_2)
-
-        self.in_proj_weight = get_module(encoder_layer.attn.in_proj_weight)
-        self.in_proj_bias = get_module(encoder_layer.attn.in_proj_bias)
-        self.out_proj = call_module(encoder_layer.attn.out_proj)
-
-        # syno modules
-        if (is_syno_adaptor):
-            self.syno_mlp = nn.Sequential(*self.make_adaptor(d_model=d_model))
-        else:
-            self.syno_mlp = None
-
-        if (is_temporal_embedding):
-            self.te_mlp = nn.Sequential(*self.make_adaptor(d_model=d_model))
-        else:
-            self.te_mlp = None
-
-        if (is_temporal_conv):
-            self.syno_tconv = self.make_tconv(d_model, n_head)
-        else:
-            self.syno_tconv = None
+        self.s_proj = nn.Linear(d_model, d_model, bias=True)
 
         # preserve attrs
         self.store_attrs = store_attrs
         self.attr = {}
 
-    def make_adaptor(self, d_model):
-        ln = nn.LayerNorm(d_model)
-        linear1 = nn.Linear(
-            d_model,
-            d_model // 8,
-            bias=False
-        )
-        linear2 = nn.Linear(
-            d_model // 8,
-            d_model,
-            bias=False
-        )
-
-        nn.init.normal_(linear1.weight, std=0.001)
-        nn.init.normal_(linear2.weight, std=0.001)
-        return [ln, linear1, linear2]
-
-    def make_tconv(self, d_model, n_head):
+    def make_tconv(self, d_model, n_filter, ksize):
         conv_1d = nn.Conv1d(
             d_model,
-            d_model,
-            kernel_size=3,
+            n_filter,
+            kernel_size=ksize,
             stride=1,
-            padding=1,
-            groups=d_model,
+            groups=1,
             bias=True
         )
 
         nn.init.normal_(conv_1d.weight, std=0.001)
+        nn.init.zeros_(conv_1d.bias)
 
         return conv_1d
 
@@ -116,110 +95,39 @@ class SynoBlock(nn.Module):
             if k in self.store_attrs
         }
 
-    def attention(
-        self,
-        attrs,
-        s: torch.Tensor,
-        te: torch.Tensor,
-        patch_mask: torch.Tensor = 0
-    ):
-        batch = s.shape[0]
+    def attention(self, attrs, s):
+        _k = attrs['k'][:, :, 1:]  # ignore cls token
+        _v = attrs['emb'][:, :, 1:]  # ignore cls token
+
+        b, t, l, h, d = _k.shape
 
         #  Synoptic Cross-Attention
-        s_q, s_k, s_v = F.linear(
-            s,
-            self.in_proj_weight(),
-            self.in_proj_bias()
-        ).chunk(3, dim=-1)
+        s_q = self.s_proj(s)
 
-        view_as = (*s_q.shape[:2], self.n_head, -1)
-
-        s_q = s_q.view(*view_as)
-        s_k = s_k.view(*view_as)
-        s_v = s_v.view(*view_as)
-
-        if (not te is None):
-            te_q, te_k, te_v = F.linear(
-                te,
-                self.in_proj_weight(),
-                self.in_proj_bias()
-            ).chunk(3, dim=-1)
-
-            view_as = (te.shape[0], 1, self.n_head, -1)
-            te_q = te_q.view(*view_as)
-            te_k = te_k.view(*view_as)
-            te_v = te_v.view(*view_as)
-        else:
-            te_q = 0
-            te_k = 0
-            te_v = 0
-
-        _k = attrs['k'][:, :, 1:]  # ignore cls token
-        _v = attrs['v'][:, :, 1:]  # ignore cls token
+        _k = _k.flatten(-2)
 
         s_aff = torch.einsum(
-            'nqhc,ntkhc->ntqkh',
+            'nqw,ntkw->ntqk',
             s_q / (s_q.size(-1) ** 0.5),
-            _k + te_k
+            _k
         )
 
-        s_aff += patch_mask
-        s_aff = s_aff.softmax(dim=-2)
+        s_aff = s_aff.softmax(dim=-1)
 
-        s_mix = torch.einsum(
-            'ntqlh,ntlhc->ntqhc',
-            s_aff,
-            _v + te_v
-        )
+        s_mix = torch.einsum('ntql,ntlw->ntqw', s_aff, _v)
 
-        if not self.syno_tconv == None:
-            s_mix = s_mix.permute(0, 2, 3, 4, 1).flatten(2, 3).flatten(0, 1)
-            # shape= (batch *  synos, head * width, frames)
-            s_mix = self.syno_tconv(s_mix) + s_mix
-            s_mix = s_mix.unflatten(1, (self.n_head, -1)).unflatten(0, (batch, -1))
-            s_mix = s_mix.permute(0, 4, 1, 2, 3)
-            # shape = (batch, frames, synos, head, width)
+        s_mix = s_mix.mean(dim=1)  # shape = (b,s,w)
+        return dict(s_q=s_q, s_mix=s_mix)
 
-        s_mix = s_mix.mean(dim=1)
-
-        s_out = self.out_proj(s_mix.flatten(-2))
-
-        return dict(
-            s_q=s_q,
-            s_k=s_k,
-            s_v=s_v,
-            s_out=s_out
-        )
-
-    def forward(self, attrs, s, te, patch_mask):
+    def forward(self, attrs, s):
         self.pop_attr()
 
-        if (not te is None):
-            if (not self.te_mlp is None):
-                _te = self.te_mlp(te) + te
-            else:
-                _te = te
-        else:
-            _te = None
+        data = self.attention(attrs, s)
 
-        if (not self.syno_mlp is None):
-            _s = s + self.syno_mlp(s)
-        else:
-            _s = s
-
-        data = self.attention(
-            attrs,
-            self.ln_1(_s),
-            (_te),
-            patch_mask
-        )
-
-        s = s + data["s_out"]
-        s = s + self.mlp(self.ln_2(s))
+        s = data["s_mix"]
 
         self.set_attr(
-            **data,
-            s_emb=s
+            **data
         )
 
         return s
@@ -229,85 +137,47 @@ class SynoDecoder(nn.Module):
     def __init__(
         self,
         encoder,
-        num_frames=1,
-        num_synos=1,
-        mask_ratio=0.0,
-        store_attrs=[],
-        is_temporal_conv=True,
-        is_syno_adaptor=True,
-        is_temporal_embedding=True
+        num_synos,
+        num_frames,
+        kernel_size,
+        num_filters,
+        store_attrs=[]
     ):
         super().__init__()
         self.encoder = get_module(encoder)
         self.patch_num = encoder.patch_num
-        self.mask_ratio = mask_ratio
-        # encoder modules
-        self.ln_pre = call_module(encoder.ln_pre)
-        self.ln_post = call_module(encoder.ln_post)
-        self.proj = get_module(encoder.proj)
-
-        # synoptic
-        self.num_synos = num_synos
-        self.syno_embedding = nn.Parameter(
-            torch.zeros(num_synos, encoder.transformer.width)
-        )
-
-        if (is_temporal_embedding):
-            self.temporal_embedding = nn.Parameter(
-                torch.zeros(num_frames, encoder.transformer.width)
-            )
-            nn.init.normal_(self.temporal_embedding, std=0.001)
-        else:
-            self.temporal_embedding = None
 
         #
         self.decoder_layers = nn.ModuleList([
             SynoBlock(
+                ksize=kernel_size,
+                n_filter=num_filters,
+                n_frame=num_frames,
                 n_head=encoder.transformer.heads,
                 d_model=encoder.transformer.width,
-                encoder_layer=encoder.transformer.resblocks[i],
-                is_syno_adaptor=is_syno_adaptor,
-                is_temporal_conv=is_temporal_conv,
-                is_temporal_embedding=is_temporal_embedding,
                 store_attrs=store_attrs
             )
             for i in range(encoder.transformer.layers)
         ])
 
+        self.syno_embedding = nn.Parameter(
+            torch.zeros(num_synos, encoder.transformer.width)
+        )
+
     def forward(self, x):
-        # training augmentations
-        if self.training and self.mask_ratio > 0:
-            patch_mask = torch.rand(self.patch_num) < self.mask_ratio
-            patch_mask = patch_mask.to(dtype=float, device=x.device) * -1e3
-            patch_mask = patch_mask.unsqueeze(1)
-        else:
-            patch_mask = torch.tensor(0, device=x.device)
-
-        s = (
-            self.syno_embedding
-            .to(x.dtype)
-            .unsqueeze(0)
-            .repeat(x.shape[0], 1, 1)
-        )  # shape = [batch, synos, width]
-
-        s = self.ln_pre(s)
-
-        te = self.temporal_embedding
-
         # first, we prepare the encoder before the transformer layers.
+        b = x.shape[0]
         x = self.encoder()._prepare(x)
+        s = self.syno_embedding.unsqueeze(0).repeat(b, 1, 1)  # shape = (b, synos, width)
+        layer_output = []
         # now, we alternate between synoptic and encoder layers
         for enc_blk, dec_blk in zip(self.encoder().transformer.resblocks, self.decoder_layers):
             data = enc_blk(x)
             x = data["emb"]
-            s = dec_blk(data, s, te, patch_mask)
+            layer_output.append(dec_blk(data, s))
         # last, we are done with the encoder, therefore skipping the _finalize step.
         # x =  self.encoder()._finalize(x)
-        s = self.ln_post(s)
-
-        if self.proj() is not None:
-            s = s @ self.proj()
-
+        s = torch.stack(layer_output, 1).sum(1)
         return s
 
 
@@ -321,12 +191,10 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         store_attrs=[],
         attn_record=False,
         # synoptic
-        num_frames=1,
         num_synos=1,
-        mask_ratio=0.0,
-        is_temporal_conv=True,
-        is_syno_adaptor=True,
-        is_temporal_embedding=True,
+        num_frames=1,
+        num_filters=1,
+        kernel_size=3,
     ):
         super(SynoVideoAttrExtractor, self).__init__(
             architecture=architecture,
@@ -339,11 +207,9 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             encoder=self.model,
             num_synos=num_synos,
             num_frames=num_frames,
-            mask_ratio=mask_ratio,
+            num_filters=num_filters,
+            kernel_size=kernel_size,
             store_attrs=store_attrs,
-            is_syno_adaptor=is_syno_adaptor,
-            is_temporal_conv=is_temporal_conv,
-            is_temporal_embedding=is_temporal_embedding,
         )
 
     def forward(self, x):
@@ -382,12 +248,7 @@ class BinaryLinearClassifier(nn.Module):
             *args,
             **kargs
         )
-        self.proj = nn.Linear(
-            self.encoder.embed_dim,
-            self.encoder.embed_dim // 8,
-            bias=False
-        )
-        self.head = self.make_linear(self.encoder.embed_dim // 8)
+        self.head = self.make_linear(self.encoder.embed_dim)
 
     def make_linear(self, embed_dim):
         linear = nn.Linear(
@@ -410,10 +271,8 @@ class BinaryLinearClassifier(nn.Module):
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
         synos = results["synos"]
-        projs = self.proj(synos.mean(1))
-        logits = self.head(projs)
+        logits = self.head(synos.mean(1))
         return dict(
-            projs=projs,
             logits=logits,
             ** results
         )
@@ -422,8 +281,10 @@ class BinaryLinearClassifier(nn.Module):
 class SynoVideoLearner(ODBinaryMetricClassifier):
     def __init__(
         self,
-        num_frames: int = 1,
         num_synos: int = 1,
+        num_frames: int = 1,
+        kernel_size: int = 3,
+        num_filters: int = 1,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
         pretrain: str = None,
@@ -432,10 +293,6 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
 
         store_attrs: List[str] = [],
         is_focal_loss: bool = True,
-        is_temporal_conv: bool = True,
-        is_syno_adaptor: bool = True,
-        is_temporal_embedding: bool = True,
-        mask_ratio: float = 0.0,
 
         cls_weight: float = 10.0,
         label_weights: List[float] = [1, 1],
@@ -449,11 +306,9 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             pretrain=pretrain,
             num_frames=num_frames,
             num_synos=num_synos,
-            store_attrs=store_attrs,
-            mask_ratio=mask_ratio,
-            is_syno_adaptor=is_syno_adaptor,
-            is_temporal_conv=is_temporal_conv,
-            is_temporal_embedding=is_temporal_embedding
+            kernel_size=kernel_size,
+            num_filters=num_filters,
+            store_attrs=store_attrs
         )
         self.model = BinaryLinearClassifier(**params)
 
@@ -557,9 +412,6 @@ class FFGSynoVideoLearner(SynoVideoLearner):
 
         store_attrs: List[str] = [],
         is_focal_loss: bool = True,
-        is_syno_adaptor: bool = True,
-        is_temporal_conv: bool = True,
-        is_temporal_embedding: bool = True,
         mask_ratio: float = 0.3,
 
         cls_weight: float = 10.0,
@@ -581,13 +433,9 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             attn_record=attn_record,
             pretrain=pretrain,
             store_attrs=set([*store_attrs, self.syno_attn_attr]),
-            mask_ratio=mask_ratio,
             cls_weight=cls_weight,
             label_weights=label_weights,
-            is_focal_loss=is_focal_loss,
-            is_syno_adaptor=is_syno_adaptor,
-            is_temporal_conv=is_temporal_conv,
-            is_temporal_embedding=is_temporal_embedding
+            is_focal_loss=is_focal_loss
         )
 
         self.save_hyperparameters()
