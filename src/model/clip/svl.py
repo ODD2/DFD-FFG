@@ -130,6 +130,7 @@ class SynoBlock(nn.Module):
         aff = self.p_conv(aff)  # shape = (n, 1, p, p)
 
         y = aff.flatten(1)
+
         return dict(y=y)  # shape = (n, p*p)
 
     def spatial_detection(self, attrs, s):
@@ -140,9 +141,8 @@ class SynoBlock(nn.Module):
 
         s_q = self.s_proj(s)  # prepare query
 
-
-        if (len(_k.shape) ==5):
-            _k = _k.flatten(-2) # match shape
+        if (len(_k.shape) == 5):
+            _k = _k.flatten(-2)  # match shape
 
         s_aff = torch.einsum(
             'nqw,ntkw->ntqk',
@@ -169,9 +169,7 @@ class SynoBlock(nn.Module):
             **ret_t
         )
 
-        y = torch.cat([y_t, y_s], dim=-1)
-
-        return y
+        return y_t, y_s
 
 
 class SynoDecoder(nn.Module):
@@ -189,13 +187,17 @@ class SynoDecoder(nn.Module):
         store_attrs=[]
     ):
         super().__init__()
+        d_model = encoder.transformer.width
+        n_head = encoder.transformer.heads
+        n_patch = int((encoder.patch_num)**0.5)
+
         self.encoder = get_module(encoder)
 
         self.decoder_layers = nn.ModuleList([
             SynoBlock(
-                d_model=encoder.transformer.width,
-                n_head=encoder.transformer.heads,
-                n_patch=int((encoder.patch_num)**0.5),
+                d_model=d_model,
+                n_head=n_head,
+                n_patch=n_patch,
                 n_filt=num_filters,
                 n_frames=num_frames,
                 ksize=kernel_size,
@@ -211,11 +213,18 @@ class SynoDecoder(nn.Module):
             torch.zeros(num_synos, encoder.transformer.width)
         )
 
-        self.feat_dim = encoder.patch_num + encoder.transformer.width
+        self.t_emb_post = nn.Linear(n_patch**2, d_model // 8, bias=False)
+        self.t_ln_post = nn.LayerNorm(n_patch**2)
+        self.s_emb_post = nn.Linear(d_model, d_model // 8, bias=False)
+        self.s_ln_post = nn.LayerNorm(d_model)
+        self.feat_dim = (d_model // 8)
 
     def forward(self, x):
         b = x.shape[0]
-        layer_output = []
+        layer_output = dict(
+            y_t=[],
+            y_s=[]
+        )
         syno_emb = self.syno_embedding.unsqueeze(0).repeat(b, 1, 1)  # shape = (b, synos, width)
 
         # first, we prepare the encoder before the transformer layers.
@@ -228,15 +237,23 @@ class SynoDecoder(nn.Module):
         ):
             data = enc_blk(x)
             x = data["emb"]
-            layer_output.append(dec_blk(data, syno_emb))
+            y_t, y_s = dec_blk(data, syno_emb)
+            layer_output["y_t"].append(y_t)
+            layer_output["y_s"].append(y_s)
 
         # last, we are done with the encoder, therefore skipping the _finalize step.
         # x =  self.encoder()._finalize(x)
 
         # aggregate the layer outputs
-        syno = sum(layer_output)
+        y_s = sum(layer_output["y_s"])
+        y_t = sum(layer_output["y_t"])
 
-        # return decoded feature
+        # align into uni-space
+        syno = (
+            self.s_emb_post(self.s_ln_post(y_s)) +
+            self.t_emb_post(self.t_ln_post(y_t))
+        )
+
         return syno
 
 
