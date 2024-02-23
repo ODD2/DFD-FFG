@@ -349,18 +349,11 @@ class BinaryLinearClassifier(nn.Module):
             *args,
             **kargs
         )
-        self.s_proj = nn.Linear(self.encoder.spatial_dim, 64)
-        self.t_proj = nn.Linear(self.encoder.temporal_dim, 64)
-        self.head = self.make_linear(128)
-
-    def make_linear(self, embed_dim):
-        linear = nn.Linear(
-            embed_dim,
+        self.s_ln = nn.LayerNorm(self.encoder.spatial_dim)
+        self.t_ln = nn.LayerNorm(self.encoder.temporal_dim)
+        self.head = nn.Linear(
+            self.encoder.spatial_dim + self.encoder.temporal_dim,
             2
-        )
-        return nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            linear
         )
 
     @property
@@ -377,11 +370,11 @@ class BinaryLinearClassifier(nn.Module):
             if random.random() < 0.25:
                 s_join = 1
                 t_join = 0
-            elif random.random() < 0.75:
-                s_join = 1
+            elif random.random() < 0.5:
+                s_join = 0
                 t_join = 1
             else:
-                s_join = 0
+                s_join = 1
                 t_join = 1
         else:
             s_join = 1
@@ -390,8 +383,8 @@ class BinaryLinearClassifier(nn.Module):
         logits = self.head(
             torch.cat(
                 [
-                    self.s_proj(results["syno_s"]) * s_join,
-                    self.t_proj(results["syno_t"]) * t_join
+                    self.s_ln(results["syno_s"] * s_join),
+                    self.t_ln(results["syno_t"] * t_join)
                 ], dim=-1
             )
         )
