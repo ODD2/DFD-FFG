@@ -376,9 +376,19 @@ class BinaryLinearClassifier(nn.Module):
         logits_s = self.s_head(results["syno_s"])
         logits_t = self.t_head(results["syno_t"])
 
+        if (self.training):
+            logits = logits_s if random.random() > 0.5 else logits_t
+        else:
+            logits = torch.log(
+                1e-4 +
+                logits_s.softmax(dim=-1) * 0.5 +
+                logits_t.softmax(dim=-1) * 0.5
+            )
+
         return dict(
             logits_s=logits_s,
             logits_t=logits_t,
+            logits=logits,
             ** results
         )
 
@@ -444,12 +454,10 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         names = batch["names"]
 
         output = self(x, **z)
-        logits_s = output["logits_s"]
-        logits_t = output["logits_t"]
+        logits = output["logits"]
         loss = 0
         # classification loss
         if (stage == "train"):
-            logits = logits_s if random.random() > 0.5 else logits_t
             if self.is_focal_loss:
                 cls_loss = focal_loss(
                     logits,
@@ -479,11 +487,6 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
                 batch_size=logits.shape[0]
             )
         else:
-            logits = torch.log(
-                1e-4 +
-                logits_s.softmax(dim=-1) * 0.5 +
-                logits_t.softmax(dim=-1) * 0.5
-            )
             # classification loss
             cls_loss = nn.functional.cross_entropy(
                 logits,
