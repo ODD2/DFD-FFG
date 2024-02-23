@@ -145,6 +145,9 @@ class SynoBlock(nn.Module):
         if (len(_k.shape) == 5):
             _k = _k.flatten(-2)  # match shape
 
+        if (len(_v.shape) == 5):
+            _v = _v.flatten(-2)  # match shape
+
         s_aff = torch.einsum(
             'nqw,ntkw->ntqk',
             s_q / (s_q.size(-1) ** 0.5),
@@ -213,12 +216,6 @@ class SynoDecoder(nn.Module):
         self.syno_embedding = nn.Parameter(
             torch.zeros(num_synos, encoder.transformer.width)
         )
-
-        self.t_emb_post = nn.Linear(n_patch**2, d_model // 8, bias=False)
-        self.t_ln_post = nn.LayerNorm(n_patch**2)
-        self.s_emb_post = nn.Linear(d_model, d_model // 8, bias=False)
-        self.s_ln_post = nn.LayerNorm(d_model)
-        self.feat_dim = (d_model // 8)
 
         self.feat_t_dim = n_patch**2
         self.feat_s_dim = d_model
@@ -301,8 +298,6 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             s_v_attr=s_v_attr,
             store_attrs=store_attrs
         )
-
-        self.feat_dim = self.decoder.feat_dim
 
     @property
     def spatial_dim(self):
@@ -671,16 +666,15 @@ if __name__ == "__main__":
 
     frames = 5
     # # AttrExtractor Test
-    model = SynoVideoAttrExtractor(
-        "ViT-B/16",
-        text_embed=True,
-        store_attrs=["s_q"],
+    model = FFGSynoVideoLearner(
+        face_feature_path="misc/L14_real_semantic_patches_v2_2000.pickle",
+        architecture="ViT-L/14",
         num_frames=frames
     )
     model.to("cuda")
     results = model(torch.randn(9, frames, 3, 224, 224).to("cuda"))
-    synos = results["synos"]
-    synos.sum().backward()
+    logits = results["logits"]
+    logits.sum().backward()
 
     # model = GlitchBlock(n_head=12, n_patch=14, n_filt=10, ksize=3, n_frames=frames)
     # model.to("cuda")
