@@ -1,6 +1,7 @@
 import wandb
 import torch
 import pickle
+import random
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -219,6 +220,17 @@ class SynoDecoder(nn.Module):
         self.s_ln_post = nn.LayerNorm(d_model)
         self.feat_dim = (d_model // 8)
 
+        self.feat_t_dim = n_patch**2
+        self.feat_s_dim = d_model
+
+    @property
+    def spatial_dim(self):
+        return self.feat_s_dim
+
+    @property
+    def temporal_dim(self):
+        return self.feat_t_dim
+
     def forward(self, x):
         b = x.shape[0]
         layer_output = dict(
@@ -248,13 +260,7 @@ class SynoDecoder(nn.Module):
         y_s = sum(layer_output["y_s"])
         y_t = sum(layer_output["y_t"])
 
-        # align into uni-space
-        syno = (
-            self.s_emb_post(self.s_ln_post(y_s)) +
-            self.t_emb_post(self.t_ln_post(y_t))
-        )
-
-        return syno
+        return y_s, y_t
 
 
 class SynoVideoAttrExtractor(VideoAttrExtractor):
@@ -298,8 +304,16 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
 
         self.feat_dim = self.decoder.feat_dim
 
+    @property
+    def spatial_dim(self):
+        return self.decoder.spatial_dim
+
+    @property
+    def temporal_dim(self):
+        return self.decoder.temporal_dim
+
     def forward(self, x):
-        synos = self.decoder(x=x)
+        syno_s, syno_t = self.decoder(x=x)
 
         layer_attrs = []
         for enc_blk, dec_blk in zip(self.model.transformer.resblocks, self.decoder.decoder_layers):
@@ -312,7 +326,8 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
 
         return dict(
             layer_attrs=layer_attrs,
-            synos=synos
+            syno_s=syno_s,
+            syno_t=syno_t
         )
 
     def train(self, mode=True):
@@ -334,8 +349,9 @@ class BinaryLinearClassifier(nn.Module):
             *args,
             **kargs
         )
-
-        self.head = self.make_linear(self.encoder.embed_dim)
+        self.s_proj = nn.Linear(self.encoder.spatial_dim, 64)
+        self.t_proj = nn.Linear(self.encoder.temporal_dim, 64)
+        self.head = self.make_linear(128)
 
     def make_linear(self, embed_dim):
         linear = nn.Linear(
@@ -357,8 +373,29 @@ class BinaryLinearClassifier(nn.Module):
 
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
-        synos = results["synos"]
-        logits = self.head(synos)
+        if (self.training):
+            if random.random() < 0.25:
+                s_join = 1
+                t_join = 0
+            elif random.random() < 0.75:
+                s_join = 1
+                t_join = 1
+            else:
+                s_join = 0
+                t_join = 1
+        else:
+            s_join = 1
+            t_join = 1
+
+        logits = self.head(
+            torch.cat(
+                [
+                    self.s_proj(results["syno_s"]) * s_join,
+                    self.t_proj(results["syno_t"]) * t_join
+                ], dim=-1
+            )
+        )
+
         return dict(
             logits=logits,
             ** results
