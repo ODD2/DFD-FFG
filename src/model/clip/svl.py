@@ -27,6 +27,7 @@ def get_module(module):
 class SynoBlock(nn.Module):
     def __init__(
         self,
+        n_synos,
         d_model,
         n_head,
         n_patch,
@@ -61,7 +62,9 @@ class SynoBlock(nn.Module):
             1
         )
 
-        self.s_proj = nn.Linear(d_model, d_model, bias=True)
+        self.syno_embedding = nn.Parameter(
+            torch.zeros(n_synos, d_model)
+        )
 
         # attribute storage
         self.store_attrs = store_attrs
@@ -134,13 +137,14 @@ class SynoBlock(nn.Module):
 
         return dict(y=y)  # shape = (n, p*p)
 
-    def spatial_detection(self, attrs, s):
+    def spatial_detection(self, attrs):
         b, t, l, h, d = attrs['q'][:, :, 1:].shape  # ignore cls token
 
         _k = attrs[self.s_k_attr][:, :, 1:]  # ignore cls token
         _v = attrs[self.s_v_attr][:, :, 1:]  # ignore cls token
 
-        s_q = self.s_proj(s)  # prepare query
+        # prepare query
+        s_q = self.syno_embedding.unsqueeze(0).repeat(b, 1, 1)  # shape = (b, synos, width)
 
         if (len(_k.shape) == 5):
             _k = _k.flatten(-2)  # match shape
@@ -162,10 +166,10 @@ class SynoBlock(nn.Module):
 
         return dict(s_q=s_q, y=y)
 
-    def forward(self, attrs, s):
+    def forward(self, attrs):
         self.pop_attr()
         ret_t = self.temporal_detection(attrs)
-        ret_s = self.spatial_detection(attrs, s)
+        ret_s = self.spatial_detection(attrs)
         y_t = ret_t.pop('y')
         y_s = ret_s.pop('y')
         self.set_attr(
@@ -199,6 +203,7 @@ class SynoDecoder(nn.Module):
 
         self.decoder_layers = nn.ModuleList([
             SynoBlock(
+                n_synos=num_synos,
                 d_model=d_model,
                 n_head=n_head,
                 n_patch=n_patch,
@@ -213,9 +218,6 @@ class SynoDecoder(nn.Module):
             )
             for _ in range(encoder.transformer.layers)
         ])
-        self.syno_embedding = nn.Parameter(
-            torch.zeros(num_synos, encoder.transformer.width)
-        )
 
         self.feat_t_dim = n_patch**2
         self.feat_s_dim = d_model
@@ -234,7 +236,6 @@ class SynoDecoder(nn.Module):
             y_t=[],
             y_s=[]
         )
-        syno_emb = self.syno_embedding.unsqueeze(0).repeat(b, 1, 1)  # shape = (b, synos, width)
 
         # first, we prepare the encoder before the transformer layers.
         x = self.encoder()._prepare(x)
@@ -246,7 +247,7 @@ class SynoDecoder(nn.Module):
         ):
             data = enc_blk(x)
             x = data["emb"]
-            y_t, y_s = dec_blk(data, syno_emb)
+            y_t, y_s = dec_blk(data)
             layer_output["y_t"].append(y_t)
             layer_output["y_s"].append(y_s)
 
@@ -581,6 +582,9 @@ class FFGSynoVideoLearner(SynoVideoLearner):
                 ]
             )
             self.face_features = self.face_features.unsqueeze(1)
+
+        for i, dec_blk in enumerate(self.model.encoder.decoder.decoder_layers):
+            dec_blk.syno_embedding.data = self.face_features[i].squeeze(0)
 
     def shared_step(self, batch, stage):
         result = super().shared_step(batch, stage)
