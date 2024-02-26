@@ -31,12 +31,9 @@ class SynoBlock(nn.Module):
         d_model,
         n_head,
         n_patch,
-        n_filt,
         n_frames,
         ksize_t,
         ksize_s,
-        t_q_attr,
-        t_k_attr,
         s_k_attr,
         s_v_attr,
         t_flatten,
@@ -47,25 +44,19 @@ class SynoBlock(nn.Module):
 
         # parameters
         self.n_patch = n_patch
-        self.t_q_attr = t_q_attr
-        self.t_k_attr = t_k_attr
+        self.n_head = n_head
         self.s_k_attr = s_k_attr
         self.s_v_attr = s_v_attr
 
-        self.t_flatten=t_flatten
+        self.t_flatten = t_flatten
 
         # modules
         self.t_conv = self.make_2dconv(
+            ksize_s,
             ksize_t,
             n_head if not self.t_flatten else 1,
-            n_filt
-        )
-        self.p_conv = self.make_2dconv(
-            ksize_s,
-            (n_frames ** 2) * n_filt,
             1
         )
-
 
         self.syno_embedding = nn.Parameter(
             torch.zeros(n_synos, d_model)
@@ -79,13 +70,12 @@ class SynoBlock(nn.Module):
         self.attn_record = attn_record
         self.aff = None
 
-    def make_2dconv(self, ksize, in_c, out_c, groups=1):
-        conv = nn.Conv2d(
+    def make_2dconv(self, ksize_s, ksize_t, in_c, out_c, groups=1):
+        conv = nn.Conv3d(
             in_channels=in_c,
             out_channels=out_c,
-            kernel_size=ksize,
+            kernel_size=(ksize_t, ksize_s, ksize_s),
             stride=1,
-            padding=ksize // 2,
             groups=groups,
             bias=True
         )
@@ -110,50 +100,38 @@ class SynoBlock(nn.Module):
             if k in self.store_attrs
         }
 
-    def temporal_detection(self, attrs):
-        b, t, l, h, d = attrs['q'][:, :, 1:].shape  # ignore cls token
+    def temporal_detection(self, q, attrs):
         p = self.n_patch  # p = l ** 0.5
 
-        _q = attrs[self.t_q_attr][:, :, 1:]  # ignore cls token
-        _k = attrs[self.t_k_attr][:, :, 1:]  # ignore cls token
+        _q = q.unflatten(-1, (self.n_head, -1))  # shape=(b, synos, h, d)
+        _k = attrs[self.s_k_attr][:, :, 1:]  # ignore cls token, shape = (b, t, l, h, d)
 
         if self.t_flatten:
-            _q = _q.flatten(3).unsqueeze(-2)
-            _k = _k.flatten(3).unsqueeze(-2)
-
-        _q = _q.permute(0, 2, 1, 3, 4)
-        _k = _k.permute(0, 2, 1, 3, 4)
+            _q = _q.flatten(-2).unsqueeze(-2)  # shape = (b, s, 1, w)
+            _k = _k.flatten(-2).unsqueeze(-2)  # shape = (b, t, l, 1, w)
 
         aff = torch.einsum(
-            'nlqhc,nlkhc->nlqkh',
+            'nqhd,ntkhd->ntqkh',
             _q / (_q.size(-1) ** 0.5),
             _k
         )
 
-        aff = aff.softmax(dim=-2)
+        aff = aff.softmax(dim=-2).sum(dim=2)  # shape=(b, t, l, h)
 
-        aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
+        aff = aff.permute(0, 3, 1, 2)  # shape=(b, h, t, l)
 
-        aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
+        aff = aff.unflatten(-1, (p, p))  # shape = (b*s,h,t,p,p)
 
-        aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, r*t*t)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n, r*t*t, p, p)
-
-        aff = self.p_conv(aff)  # shape = (n, 1, p, p)
+        aff = self.t_conv(aff)  # shape = (b,1,t',p',p')
 
         y = aff.flatten(1)
 
-        return dict(y=y)  # shape = (n, p*p)
+        return dict(y=y)  # shape = (n, t'*p'*p')
 
-    def spatial_detection(self, attrs):
-        b, t, l, h, d = attrs['q'][:, :, 1:].shape  # ignore cls token
+    def spatial_detection(self, _q, attrs):
 
         _k = attrs[self.s_k_attr][:, :, 1:]  # ignore cls token
         _v = attrs[self.s_v_attr][:, :, 1:]  # ignore cls token
-        
-        # prepare query
-        s_q = self.syno_embedding.unsqueeze(0).repeat(b, 1, 1)  # shape = (b, synos, width)
 
         if (len(_k.shape) == 5):
             _k = _k.flatten(-2)  # match shape
@@ -163,7 +141,7 @@ class SynoBlock(nn.Module):
 
         s_aff = torch.einsum(
             'nqw,ntkw->ntqk',
-            s_q / (s_q.size(-1) ** 0.5),
+            _q / (_q.size(-1) ** 0.5),
             _k
         )
 
@@ -173,15 +151,21 @@ class SynoBlock(nn.Module):
 
         y = s_mix.flatten(1, 2).mean(dim=1)  # shape = (b,w)
 
-        return dict(s_q=s_q, y=y)
+        return dict(y=y)
 
     def forward(self, attrs):
         self.pop_attr()
-        ret_t = self.temporal_detection(attrs)
-        ret_s = self.spatial_detection(attrs)
+
+        b = attrs['q'][:, :, 1:].shape[0]
+        q = self.syno_embedding.unsqueeze(0).repeat(b, 1, 1)  # shape = (b, synos, width)
+
+        ret_t = self.temporal_detection(q, attrs)
+        ret_s = self.spatial_detection(q, attrs)
         y_t = ret_t.pop('y')
         y_s = ret_s.pop('y')
+
         self.set_attr(
+            **dict(s_q=q),
             **ret_s,
             **ret_t
         )
@@ -195,11 +179,8 @@ class SynoDecoder(nn.Module):
         encoder,
         num_synos,
         num_frames,
-        num_filters,
         ksize_s,
         ksize_t,
-        t_q_attr,
-        t_k_attr,
         s_k_attr,
         s_v_attr,
         t_flatten,
@@ -218,12 +199,9 @@ class SynoDecoder(nn.Module):
                 d_model=d_model,
                 n_head=n_head,
                 n_patch=n_patch,
-                n_filt=num_filters,
                 n_frames=num_frames,
                 ksize_t=ksize_t,
                 ksize_s=ksize_s,
-                t_q_attr=t_q_attr,
-                t_k_attr=t_k_attr,
                 s_k_attr=s_k_attr,
                 s_v_attr=s_v_attr,
                 t_flatten=t_flatten,
@@ -232,7 +210,7 @@ class SynoDecoder(nn.Module):
             for _ in range(encoder.transformer.layers)
         ])
 
-        self.feat_t_dim = n_patch**2
+        self.feat_t_dim = (num_frames - ksize_t + 1) * ((n_patch - ksize_s + 1)**2)
         self.feat_s_dim = d_model
 
     @property
@@ -286,11 +264,8 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         # synoptic
         num_synos=1,
         num_frames=1,
-        num_filters=10,
         ksize_t=3,
         ksize_s=3,
-        t_q_attr="q",
-        t_k_attr="k",
         s_k_attr="k",
         s_v_attr="v",
         t_flatten=False,
@@ -306,11 +281,8 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             encoder=self.model,
             num_synos=num_synos,
             num_frames=num_frames,
-            num_filters=num_filters,
             ksize_t=ksize_t,
             ksize_s=ksize_s,
-            t_q_attr=t_q_attr,
-            t_k_attr=t_k_attr,
             s_k_attr=s_k_attr,
             s_v_attr=s_v_attr,
             t_flatten=t_flatten,
@@ -413,11 +385,8 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         self,
         num_synos: int = 1,
         num_frames: int = 1,
-        num_filters: int = 10,
         ksize_s: int = 3,
         ksize_t: int = 3,
-        t_q_attr: str = "q",
-        t_k_attr: str = "k",
         s_k_attr: str = "k",
         s_v_attr: str = "v",
         t_flatten: bool = False,
@@ -442,12 +411,9 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             pretrain=pretrain,
             num_synos=num_synos,
             num_frames=num_frames,
-            num_filters=num_filters,
             ksize_s=ksize_s,
             ksize_t=ksize_t,
             store_attrs=store_attrs,
-            t_q_attr=t_q_attr,
-            t_k_attr=t_k_attr,
             s_k_attr=s_k_attr,
             s_v_attr=s_v_attr,
             t_flatten=t_flatten
@@ -549,11 +515,8 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         pretrain: str = None,
 
         num_frames: int = 1,
-        num_filters: int = 10,
         ksize_s: int = 3,
         ksize_t: int = 3,
-        t_q_attr: str = "q",
-        t_k_attr: str = "k",
         s_k_attr: str = "k",
         s_v_attr: str = "v",
         t_flatten: bool = False,
@@ -577,11 +540,8 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         super().__init__(
             num_frames=num_frames,
             num_synos=self.num_face_parts,
-            num_filters=num_filters,
             ksize_s=ksize_s,
             ksize_t=ksize_t,
-            t_q_attr=t_q_attr,
-            t_k_attr=t_k_attr,
             s_k_attr=s_k_attr,
             s_v_attr=s_v_attr,
             t_flatten=t_flatten,
