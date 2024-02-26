@@ -63,7 +63,7 @@ class SynoBlock(nn.Module):
         self.p_conv = self.make_2dconv(
             ksize_s,
             (n_frames ** 2) * n_filt,
-            1
+            n_filt
         )
 
 
@@ -232,7 +232,7 @@ class SynoDecoder(nn.Module):
             for _ in range(encoder.transformer.layers)
         ])
 
-        self.feat_t_dim = n_patch**2
+        self.feat_t_dim = (n_patch**2)*num_filters
         self.feat_s_dim = d_model
 
     @property
