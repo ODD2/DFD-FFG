@@ -109,11 +109,18 @@ class SynoDecoder(nn.Module):
         num_frames,
         num_filters,
         kernel_size,
+        num_layers,
         q_attr,
         k_attr
     ):
         super().__init__()
         self.encoder = get_module(encoder)
+
+        if (num_layers < 0):
+            num_layers = self.encoder().transformer.layers
+
+        self.num_decoder_layer = num_layers
+        self.num_encoder_layer = self.encoder().transformer.layers - num_layers
 
         self.decoder_layers = nn.ModuleList([
             GlitchBlock(
@@ -125,15 +132,22 @@ class SynoDecoder(nn.Module):
                 q_attr=q_attr,
                 k_attr=k_attr
             )
-            for _ in range(encoder.transformer.layers)
+            for _ in range(num_layers)
         ])
 
     def forward(self, x):
         # first, we prepare the encoder before the transformer layers.
         x = self.encoder()._prepare(x)
         out = []
+        for enc_blk in self.encoder().transformer.resblocks[:self.num_encoder_layer]:
+            data = enc_blk(x)
+            x = data["emb"]
+
         # now, we alternate between synoptic and encoder layers
-        for enc_blk, dec_blk in zip(self.encoder().transformer.resblocks, self.decoder_layers):
+        for enc_blk, dec_blk in zip(
+            self.encoder().transformer.resblocks[self.num_encoder_layer:],
+            self.decoder_layers
+        ):
             data = enc_blk(x)
             x = data["emb"]
             out.append(dec_blk(data))
@@ -156,6 +170,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         num_frames=1,
         num_filters=10,
         kernel_size=3,
+        num_layers=-1,
         q_attr="q",
         k_attr="k"
     ):
@@ -171,8 +186,9 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             num_frames=num_frames,
             num_filters=num_filters,
             kernel_size=kernel_size,
+            num_layers=num_layers,
             q_attr=q_attr,
-            k_attr=k_attr
+            k_attr=k_attr,
         )
 
         self.feat_dim = self.model.patch_num
@@ -249,6 +265,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         num_frames: int = 1,
         num_filters: int = 10,
         kernel_size: int = 3,
+        num_layers: int = -1,
         q_attr="q",
         k_attr="k",
         architecture: str = 'ViT-B/16',
@@ -274,6 +291,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             num_filters=num_filters,
             kernel_size=kernel_size,
             store_attrs=store_attrs,
+            num_layers=num_layers,
             q_attr=q_attr,
             k_attr=k_attr
         )
