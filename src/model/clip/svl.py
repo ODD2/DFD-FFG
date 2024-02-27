@@ -46,11 +46,12 @@ class GlitchBlock(nn.Module):
         self.t_conv = self.make_2dconv(
             ksize,
             n_head,
-            n_filt
+            n_head,
+            groups=n_head
         )
         self.p_conv = self.make_2dconv(
             ksize,
-            (n_frames ** 2) * n_filt,
+            (n_frames ** 2) * n_head,
             1
         )
 
