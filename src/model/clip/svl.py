@@ -50,7 +50,7 @@ class GlitchBlock(nn.Module):
         )
         self.p_conv = self.make_2dconv(
             ksize,
-            (n_frames ** 2) * n_filt,
+            ((n_frames - ksize + 1) ** 2) * n_filt,
             1
         )
 
@@ -60,7 +60,6 @@ class GlitchBlock(nn.Module):
             out_channels=out_c,
             kernel_size=ksize,
             stride=1,
-            padding=ksize // 2,
             groups=groups,
             bias=True
         )
@@ -175,7 +174,8 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             k_attr=k_attr
         )
 
-        self.feat_dim = self.model.patch_num
+        n_patch = self.model.patch_num ** 0.5
+        self.feat_dim = int((n_patch - kernel_size + 1) ** 2)
 
     def forward(self, x):
         synos = self.decoder(x=x)
