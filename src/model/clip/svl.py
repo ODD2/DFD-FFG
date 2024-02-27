@@ -65,9 +65,6 @@ class GlitchBlock(nn.Module):
             bias=True
         )
 
-        nn.init.normal_(conv.weight, std=0.001)
-        nn.init.zeros_(conv.bias)
-
         return conv
 
     def forward(self, attrs):
