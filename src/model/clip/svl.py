@@ -43,15 +43,15 @@ class GlitchBlock(nn.Module):
         self.q_attr = q_attr
         self.k_attr = k_attr
 
-        self.t_conv = self.make_2dconv(
-            ksize,
-            n_head,
-            n_filt
-        )
-        self.p_conv = self.make_2dconv(
-            ksize,
-            (n_frames ** 2) * n_filt,
-            1
+        self.t_conv = nn.Sequential(
+            *[
+                self.make_2dconv(
+                    3,
+                    n_head + (i) * 4,
+                    n_head + (i + 1) * 4,
+                )
+                for i in range((n_frames - 1) // 2)
+            ]
         )
 
     def make_2dconv(self, ksize, in_c, out_c, groups=1):
@@ -60,7 +60,7 @@ class GlitchBlock(nn.Module):
             out_channels=out_c,
             kernel_size=ksize,
             stride=1,
-            padding=ksize // 2,
+            padding=0,
             groups=groups,
             bias=True
         )
@@ -94,12 +94,10 @@ class GlitchBlock(nn.Module):
 
         aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
 
-        aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, r*t*t)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n, r*t*t, p, p)
+        aff = aff.flatten(1)  # shape = (n*l, r*t*t)
+        aff = aff.unflatten(0, (b, l)).sum(1)  # shape = (n, r*t*t)
 
-        aff = self.p_conv(aff)  # shape = (n, 1, p, p)
-
-        return aff.flatten(1)  # shape = (n, p*p)
+        return aff
 
 
 class SynoDecoder(nn.Module):
@@ -112,6 +110,7 @@ class SynoDecoder(nn.Module):
         q_attr,
         k_attr
     ):
+        assert num_frames % 2 == 1, "num_frames should be odd"
         super().__init__()
         self.encoder = get_module(encoder)
 
@@ -175,7 +174,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             k_attr=k_attr
         )
 
-        self.feat_dim = self.model.patch_num
+        self.feat_dim = (num_frames - 1) // 2 * 4 + self.model.transformer.heads
 
     def forward(self, x):
         synos = self.decoder(x=x)
