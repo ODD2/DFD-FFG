@@ -45,7 +45,7 @@ class GlitchBlock(nn.Module):
 
         self.t_conv = self.make_2dconv(
             ksize,
-            n_head,
+            n_head * 3,
             n_filt
         )
         self.p_conv = self.make_2dconv(
@@ -72,25 +72,27 @@ class GlitchBlock(nn.Module):
 
     def forward(self, attrs):
 
-        _q = attrs[self.q_attr][:, :, 1:]
-        _k = attrs[self.k_attr][:, :, 1:]  # ignore cls token
-
-        b, t, l, h, d = _q.shape
+        b, t, l, h, d = attrs["q"][:, :, 1:].shape
         p = self.n_patch  # p = l ** 0.5
 
-        _q = _q.permute(0, 2, 1, 3, 4)
-        _k = _k.permute(0, 2, 1, 3, 4)
+        affs = []
+        for attr in ["q", "k", "v"]:
+            _attr = attrs[attr][:, :, 1:]  # ignore cls token
+            _attr = _attr.permute(0, 2, 1, 3, 4)
 
-        aff = torch.einsum(
-            'nlqhc,nlkhc->nlqkh',
-            _q / (_q.size(-1) ** 0.5),
-            _k
-        )
+            aff = torch.einsum(
+                'nlqhc,nlkhc->nlqkh',
+                _attr / (_attr.size(-1) ** 0.5),
+                _attr
+            )
 
-        aff = aff.softmax(dim=-2)
+            aff = aff.softmax(dim=-2)
 
-        aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
+            aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
+            aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
+            affs.append(aff)
+
+        aff = torch.cat(affs, dim=1)  # shape = (n*l, 3*h, t, t)
 
         aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
 
