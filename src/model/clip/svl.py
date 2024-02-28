@@ -54,13 +54,19 @@ class GlitchBlock(nn.Module):
             ]
         )
 
-    def make_2dconv(self, ksize, in_c, out_c, groups=1):
+        self.p_conv = self.make_2dconv(
+            ksize,
+            n_head + (n_frames - 1) // (ksize - 1) * 4,
+            1,
+        )
+
+    def make_2dconv(self, ksize, in_c, out_c, groups=1, padding=0):
         conv = nn.Conv2d(
             in_channels=in_c,
             out_channels=out_c,
             kernel_size=ksize,
             stride=1,
-            padding=0,
+            padding=padding,
             groups=groups,
             bias=True
         )
@@ -92,7 +98,10 @@ class GlitchBlock(nn.Module):
         aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
 
         aff = aff.flatten(1)  # shape = (n*l, r*t*t)
-        aff = aff.unflatten(0, (b, l)).sum(1)  # shape = (n, r*t*t)
+        aff = aff.unflatten(0, (b, p, p))  # shape = (n, p,p,r*t*t)
+        aff = aff.permute(0, 3, 1, 2)  # shape = (n, r*t*t, p, p)
+        aff = self.p_conv(aff)  # shape = (n, 1, p, p)
+        aff = aff.flatten(1)  # shape = (n, p*p)
 
         return aff
 
@@ -173,7 +182,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             k_attr=k_attr
         )
 
-        self.feat_dim = (num_frames - 1) // (kernel_size - 1) * 4 + self.model.transformer.heads
+        self.feat_dim = int(((self.model.patch_num**0.5) - kernel_size + 1)**2)
 
     def forward(self, x):
         synos = self.decoder(x=x)
