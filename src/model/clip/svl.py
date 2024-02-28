@@ -29,6 +29,7 @@ class GlitchBlock(nn.Module):
         n_head,
         n_patch,
         n_filt,
+        d_model,
         n_frames,
         ksize,
         q_attr,
@@ -43,16 +44,32 @@ class GlitchBlock(nn.Module):
         self.q_attr = q_attr
         self.k_attr = k_attr
 
-        self.t_conv = self.make_2dconv(
+        self.t_conv = self.make_1dconv(
             ksize,
-            n_head,
-            n_filt
+            d_model // n_head,
+            1
         )
         self.p_conv = self.make_2dconv(
             ksize,
-            (n_frames ** 2) * n_filt,
+            n_frames,
             1
         )
+
+    def make_1dconv(self, ksize, in_c, out_c, groups=1):
+        conv = nn.Conv1d(
+            in_channels=in_c,
+            out_channels=out_c,
+            kernel_size=ksize,
+            stride=1,
+            padding=ksize // 2,
+            groups=groups,
+            bias=True
+        )
+
+        nn.init.normal_(conv.weight, std=0.001)
+        nn.init.zeros_(conv.bias)
+
+        return conv
 
     def make_2dconv(self, ksize, in_c, out_c, groups=1):
         conv = nn.Conv2d(
@@ -72,34 +89,22 @@ class GlitchBlock(nn.Module):
 
     def forward(self, attrs):
 
-        _q = attrs[self.q_attr][:, :, 1:]
         _k = attrs[self.k_attr][:, :, 1:]  # ignore cls token
 
-        b, t, l, h, d = _q.shape
+        b, t, l, h, d = _k.shape
         p = self.n_patch  # p = l ** 0.5
 
-        _q = _q.permute(0, 2, 1, 3, 4)
-        _k = _k.permute(0, 2, 1, 3, 4)
+        _k = _k.permute(0, 3, 2, 4, 1)  # shape = (n, h, l, d, t)
+        _k = _k.flatten(0, 2)  # shape = (n*h*l,d,t)
 
-        aff = torch.einsum(
-            'nlqhc,nlkhc->nlqkh',
-            _q / (_q.size(-1) ** 0.5),
-            _k
-        )
+        feat = self.t_conv(_k).squeeze(-2)  # shape = (n*h*l,t)
 
-        aff = aff.softmax(dim=-2)
+        feat = feat.unflatten(0, (b * h, p, p))  # shape =(n*h,p,p,t)
+        feat = feat.permute(0, 3, 1, 2)  # shape = (n*h,t,p,p)
+        feat = self.p_conv(feat).squeeze(-3)  # shape = (n*h, p, p)
+        feat = feat.unflatten(0, (b, h)).mean(1).flatten(1)  # shape = (n, p*p)
 
-        aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
-
-        aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
-
-        aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, r*t*t)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n, r*t*t, p, p)
-
-        aff = self.p_conv(aff)  # shape = (n, 1, p, p)
-
-        return aff.flatten(1)  # shape = (n, p*p)
+        return feat
 
 
 class SynoDecoder(nn.Module):
@@ -119,6 +124,7 @@ class SynoDecoder(nn.Module):
             GlitchBlock(
                 n_head=encoder.transformer.heads,
                 n_patch=int((encoder.patch_num)**0.5),
+                d_model=encoder.transformer.width,
                 n_filt=num_filters,
                 n_frames=num_frames,
                 ksize=kernel_size,
