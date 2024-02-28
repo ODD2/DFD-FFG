@@ -8,7 +8,9 @@ from lightning.pytorch.trainer.trainer import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from lightning.pytorch.cli import LightningCLI, SaveConfigCallback
-from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, RichProgressBar
+from lightning.pytorch.callbacks import (
+    EarlyStopping, LearningRateMonitor, RichProgressBar, StochasticWeightAveraging
+)
 
 
 class ODLightningCLI(LightningCLI):
@@ -32,6 +34,13 @@ class ODLightningCLI(LightningCLI):
             {
                 'lr_monitor.log_momentum': True,
                 'lr_monitor.logging_interval': 'step'
+            }
+        )
+
+        parser.add_lightning_class_args(StochasticWeightAveraging, "swa")
+        parser.set_defaults(
+            {
+                'swa.swa_lrs': 1e-2
             }
         )
 
