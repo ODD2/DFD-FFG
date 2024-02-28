@@ -52,12 +52,12 @@ class SynoBlock(nn.Module):
         self.s_k_attr = s_k_attr
         self.s_v_attr = s_v_attr
 
-        self.t_flatten=t_flatten
+        self.t_flatten = t_flatten
 
         # modules
         self.t_conv = self.make_2dconv(
             ksize_t,
-            n_head if not self.t_flatten else 1,
+            (n_head if not self.t_flatten else 1) * 3,
             n_filt
         )
         self.p_conv = self.make_2dconv(
@@ -65,7 +65,6 @@ class SynoBlock(nn.Module):
             (n_frames ** 2) * n_filt,
             1
         )
-
 
         self.syno_embedding = nn.Parameter(
             torch.zeros(n_synos, d_model)
@@ -114,26 +113,27 @@ class SynoBlock(nn.Module):
         b, t, l, h, d = attrs['q'][:, :, 1:].shape  # ignore cls token
         p = self.n_patch  # p = l ** 0.5
 
-        _q = attrs[self.t_q_attr][:, :, 1:]  # ignore cls token
-        _k = attrs[self.t_k_attr][:, :, 1:]  # ignore cls token
+        affs = []
+        for attr in ["q", "k", "v"]:
+            _attr = attrs[attr][:, :, 1:]  # ignore cls token
+            if self.t_flatten:
+                _attr = _attr.flatten(3).unsqueeze(-2)
 
-        if self.t_flatten:
-            _q = _q.flatten(3).unsqueeze(-2)
-            _k = _k.flatten(3).unsqueeze(-2)
+            _attr = _attr.permute(0, 2, 1, 3, 4)
 
-        _q = _q.permute(0, 2, 1, 3, 4)
-        _k = _k.permute(0, 2, 1, 3, 4)
+            aff = torch.einsum(
+                'nlqhc,nlkhc->nlqkh',
+                _attr / (_attr.size(-1) ** 0.5),
+                _attr
+            )
 
-        aff = torch.einsum(
-            'nlqhc,nlkhc->nlqkh',
-            _q / (_q.size(-1) ** 0.5),
-            _k
-        )
+            aff = aff.softmax(dim=-2)
 
-        aff = aff.softmax(dim=-2)
+            aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
+            aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
+            affs.append(aff)
 
-        aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
+        aff = torch.cat(affs, dim=1)  # shape = (n*l, 3*h, t, t)
 
         aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
 
@@ -151,7 +151,7 @@ class SynoBlock(nn.Module):
 
         _k = attrs[self.s_k_attr][:, :, 1:]  # ignore cls token
         _v = attrs[self.s_v_attr][:, :, 1:]  # ignore cls token
-        
+
         # prepare query
         s_q = self.syno_embedding.unsqueeze(0).repeat(b, 1, 1)  # shape = (b, synos, width)
 
