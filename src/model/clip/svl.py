@@ -46,11 +46,11 @@ class GlitchBlock(nn.Module):
         self.t_conv = nn.Sequential(
             *[
                 self.make_2dconv(
-                    3,
+                    ksize,
                     n_head + (i) * 4,
                     n_head + (i + 1) * 4,
                 )
-                for i in range((n_frames - 1) // 2)
+                for i in range((n_frames - 1) // (ksize - 1))
             ]
         )
 
@@ -107,7 +107,6 @@ class SynoDecoder(nn.Module):
         q_attr,
         k_attr
     ):
-        assert num_frames % 2 == 1, "num_frames should be odd"
         super().__init__()
         self.encoder = get_module(encoder)
 
@@ -155,6 +154,9 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         q_attr="q",
         k_attr="k"
     ):
+        assert num_frames % 2 == 1, "num_frames should be odd"
+        assert (num_frames - 1) % (kernel_size - 1) == 0, "n_frames - 1 should be divisible by ksize - 1"
+
         super(SynoVideoAttrExtractor, self).__init__(
             architecture=architecture,
             text_embed=text_embed,
@@ -171,7 +173,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             k_attr=k_attr
         )
 
-        self.feat_dim = (num_frames - 1) // 2 * 4 + self.model.transformer.heads
+        self.feat_dim = (num_frames - 1) // (kernel_size - 1) * 4 + self.model.transformer.heads
 
     def forward(self, x):
         synos = self.decoder(x=x)
