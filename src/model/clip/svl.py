@@ -71,12 +71,18 @@ class GlitchBlock(nn.Module):
         return conv
 
     def forward(self, attrs):
-
+        b, t, l, h, d = attrs['q'].shape
         _q = attrs[self.q_attr][:, :, 1:]
         _k = attrs[self.k_attr][:, :, 1:]  # ignore cls token
 
-        b, t, l, h, d = _q.shape
         p = self.n_patch  # p = l ** 0.5
+
+        # enforce head dimension
+        if len(_q.shape) == 4:
+            _q = _q.unflatten(-1, (h, d))
+
+        if len(_k.shape) == 4:
+            _k = _k.unflatten(-1, (h, d))
 
         _q = _q.permute(0, 2, 1, 3, 4)
         _k = _k.permute(0, 2, 1, 3, 4)
