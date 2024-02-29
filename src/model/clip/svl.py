@@ -46,8 +46,26 @@ class GlitchBlock(nn.Module):
         self.t_conv = self.make_2dconv(
             ksize,
             n_head * 3,
-            n_filt
+            1
         )
+
+        self.p_proj = nn.Sequential(
+            nn.LayerNorm(n_frames**2),
+            self.make_linear(n_frames**2, n_frames**2)
+        )
+
+    def make_linear(self, in_dim, out_dim, bias=True):
+
+        linear = nn.Linear(
+            in_features=in_dim,
+            out_features=out_dim,
+            bias=bias
+        )
+
+        nn.init.normal_(linear.weight, std=0.001)
+        nn.init.zeros_(linear.bias)
+
+        return linear
 
     def make_2dconv(self, ksize, in_c, out_c, groups=1):
         conv = nn.Conv2d(
@@ -92,6 +110,8 @@ class GlitchBlock(nn.Module):
         aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
 
         aff = aff.unflatten(0, (b, l)).flatten(2)  # shape = (n, l, r*t*t)
+
+        aff = self.p_proj(aff)
 
         std, mean = torch.std_mean(aff, dim=1)
 
@@ -171,7 +191,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             k_attr=k_attr
         )
 
-        self.feat_dim = (num_frames**2) * num_filters * 2
+        self.feat_dim = (num_frames**2) * 2
 
     def forward(self, x):
         synos = self.decoder(x=x)
