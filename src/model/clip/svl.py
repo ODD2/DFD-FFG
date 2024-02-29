@@ -52,7 +52,7 @@ class SynoBlock(nn.Module):
         self.s_k_attr = s_k_attr
         self.s_v_attr = s_v_attr
 
-        self.t_flatten=t_flatten
+        self.t_flatten = t_flatten
 
         # modules
         self.t_conv = self.make_2dconv(
@@ -65,7 +65,6 @@ class SynoBlock(nn.Module):
             (n_frames ** 2) * n_filt,
             1
         )
-
 
         self.syno_embedding = nn.Parameter(
             torch.zeros(n_synos, d_model)
@@ -151,7 +150,7 @@ class SynoBlock(nn.Module):
 
         _k = attrs[self.s_k_attr][:, :, 1:]  # ignore cls token
         _v = attrs[self.s_v_attr][:, :, 1:]  # ignore cls token
-        
+
         # prepare query
         s_q = self.syno_embedding.unsqueeze(0).repeat(b, 1, 1)  # shape = (b, synos, width)
 
@@ -208,6 +207,7 @@ class SynoDecoder(nn.Module):
         super().__init__()
         d_model = encoder.transformer.width
         n_head = encoder.transformer.heads
+        layers = encoder.transformer.layers
         n_patch = int((encoder.patch_num)**0.5)
 
         self.encoder = get_module(encoder)
@@ -234,6 +234,19 @@ class SynoDecoder(nn.Module):
 
         self.feat_t_dim = n_patch**2
         self.feat_s_dim = d_model
+
+        self.se_s = nn.Sequential(
+            nn.LayerNorm(layers),
+            nn.Linear(layers, layers),
+            nn.ReLU(),
+            nn.Linear(layers, layers)
+        )
+        self.se_t = nn.Sequential(
+            nn.LayerNorm(layers),
+            nn.Linear(layers, layers),
+            nn.ReLU(),
+            nn.Linear(layers, layers)
+        )
 
     @property
     def spatial_dim(self):
@@ -268,8 +281,10 @@ class SynoDecoder(nn.Module):
         # x =  self.encoder()._finalize(x)
 
         # aggregate the layer outputs
-        y_s = sum(layer_output["y_s"])
-        y_t = sum(layer_output["y_t"])
+        y_s = torch.stack(layer_output["y_s"], dim=1)
+        y_s = torch.einsum("bld,bl -> bd", y_s, self.se_s(y_s.mean(dim=2)))
+        y_t = torch.stack(layer_output["y_t"], dim=1)
+        y_t = torch.einsum("bld,bl -> bd", y_t, self.se_t(y_t.mean(dim=2)))
 
         return y_s, y_t
 
