@@ -46,12 +46,12 @@ class GlitchBlock(nn.Module):
         self.t_conv = self.make_2dconv(
             ksize,
             n_head * 3,
-            n_filt
+            1
         )
         self.p_conv = self.make_2dconv(
             ksize,
-            (n_frames ** 2) * n_filt,
-            1
+            (n_frames ** 2),
+            n_filt
         )
 
     def make_2dconv(self, ksize, in_c, out_c, groups=1):
@@ -94,12 +94,15 @@ class GlitchBlock(nn.Module):
 
         aff = torch.cat(affs, dim=1)  # shape = (n*l, 3*h, t, t)
 
-        aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
+        aff = self.t_conv(aff)  # shape = (n*l, 1, t, t) where r is number of filters
 
-        aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, r*t*t)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n, r*t*t, p, p)
+        aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, t*t)
+        aff = aff.permute(0, 3, 1, 2)  # shape = (n, t*t, p, p)
 
-        aff = self.p_conv(aff)  # shape = (n, 1, p, p)
+        aff = self.p_conv(aff)  # shape = (n, r, p, p)
+
+        aff = aff.flatten(2)  # shape = (n, r, p*p)
+        aff = aff.mean(dim=-1)
 
         return aff.flatten(1)  # shape = (n, p*p)
 
@@ -177,7 +180,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             k_attr=k_attr
         )
 
-        self.feat_dim = self.model.patch_num
+        self.feat_dim = num_filters
 
     def forward(self, x):
         synos = self.decoder(x=x)
