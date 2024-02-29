@@ -362,11 +362,13 @@ class BinaryLinearClassifier(nn.Module):
             *args,
             **kargs
         )
-        self.s_ln = nn.LayerNorm(self.encoder.spatial_dim)
-        self.t_ln = nn.LayerNorm(self.encoder.temporal_dim)
-        self.head = nn.Linear(
-            self.encoder.spatial_dim + self.encoder.temporal_dim,
-            2
+        self.s_head = nn.Sequential(
+            nn.LayerNorm(self.encoder.spatial_dim),
+            nn.Linear(self.encoder.spatial_dim, 2)
+        )
+        self.t_head = nn.Sequential(
+            nn.LayerNorm(self.encoder.temporal_dim),
+            nn.Linear(self.encoder.temporal_dim, 2)
         )
 
     @property
@@ -379,31 +381,17 @@ class BinaryLinearClassifier(nn.Module):
 
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
-        if (self.training):
-            if random.random() < 0.3:
-                s_join = 1
-                t_join = 0
-            elif random.random() < 0.3:
-                s_join = 0
-                t_join = 1
-            else:
-                s_join = 1
-                t_join = 1
-        else:
-            s_join = 1
-            t_join = 1
 
-        logits = self.head(
-            torch.cat(
-                [
-                    self.s_ln(results["syno_s"] * s_join),
-                    self.t_ln(results["syno_t"] * t_join)
-                ], dim=-1
-            )
+        logits_s = self.s_head(results["syno_s"])
+        logits_t = self.t_head(results["syno_t"])
+        logits = torch.log(
+            logits_s.softmax(dim=-1) + logits_t.softmax(dim=-1) + 1e-4
         )
 
         return dict(
             logits=logits,
+            logits_s=logits_s,
+            logits_t=logits_t,
             ** results
         )
 
@@ -477,6 +465,14 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         loss = 0
         # classification loss
         if (stage == "train"):
+            y = y.repeat(2)
+            logits = torch.cat(
+                [
+                    output["logits_s"],
+                    output["logits_t"]
+                ],
+                dim=0
+            )
             if self.is_focal_loss:
                 cls_loss = focal_loss(
                     logits,
