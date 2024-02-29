@@ -86,7 +86,9 @@ class GlitchBlock(nn.Module):
                 _attr
             )
 
-            aff = aff.softmax(dim=-2)
+            aff = aff.flatten(2, 3)  # shape = (n,l,t*t,h)
+            aff = aff.softmax(dim=-2)  # shape = (n,l,t*t,h)
+            aff = aff.unflatten(2, (t, t))  # shape = (n,l,t,t,h)
 
             aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
             aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
