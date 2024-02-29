@@ -51,7 +51,11 @@ class GlitchBlock(nn.Module):
 
         self.p_proj = nn.Sequential(
             nn.LayerNorm(n_frames**2),
-            self.make_linear(n_frames**2, n_frames**2)
+            self.make_linear(
+                n_frames**2,
+                n_frames**2,
+                bias=False
+            ),
         )
 
     def make_linear(self, in_dim, out_dim, bias=True):
@@ -63,7 +67,8 @@ class GlitchBlock(nn.Module):
         )
 
         nn.init.normal_(linear.weight, std=0.001)
-        nn.init.zeros_(linear.bias)
+        if (bias):
+            nn.init.zeros_(linear.bias)
 
         return linear
 
@@ -111,7 +116,7 @@ class GlitchBlock(nn.Module):
 
         aff = aff.unflatten(0, (b, l)).flatten(2)  # shape = (n, l, r*t*t)
 
-        aff = self.p_proj(aff)
+        aff = self.p_proj(aff) + aff
 
         std, mean = torch.std_mean(aff, dim=1)
 
