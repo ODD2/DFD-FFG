@@ -43,6 +43,8 @@ class GlitchBlock(nn.Module):
         self.q_attr = q_attr
         self.k_attr = k_attr
 
+        self.t_norm = nn.LayerNorm(n_frames**2)
+
         self.t_conv = self.make_2dconv(
             ksize,
             n_head * 3,
@@ -86,10 +88,9 @@ class GlitchBlock(nn.Module):
                 _attr
             )
 
-            aff = aff.softmax(dim=-2)
-
             aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
             aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
+            aff = self.t_norm(aff.flatten(2)).unflatten(-1, (t, t))
             affs.append(aff)
 
         aff = torch.cat(affs, dim=1)  # shape = (n*l, 3*h, t, t)
