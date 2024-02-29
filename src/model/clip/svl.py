@@ -58,6 +58,21 @@ class GlitchBlock(nn.Module):
             ),
         )
 
+        self.t_proj = nn.Sequential(
+            nn.LayerNorm(n_head * 3),
+            self.make_linear(
+                n_head * 3,
+                n_head * 6,
+                bias=False
+            ),
+            nn.ReLU(),
+            self.make_linear(
+                n_head * 6,
+                n_head * 3,
+                bias=False
+            )
+        )
+
     def make_linear(self, in_dim, out_dim, bias=True):
 
         linear = nn.Linear(
@@ -111,6 +126,10 @@ class GlitchBlock(nn.Module):
             affs.append(aff)
 
         aff = torch.cat(affs, dim=1)  # shape = (n*l, 3*h, t, t)
+
+        aff = aff.permute(0, 2, 3, 1)
+        aff = self.t_proj(aff) + aff  # shape = (n*l, t, t, 3*h)
+        aff = aff.permute(0, 3, 1, 2)
 
         aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
 
