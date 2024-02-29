@@ -82,8 +82,8 @@ class GlitchBlock(nn.Module):
 
             aff = torch.einsum(
                 'nlqhc,nlkhc->nlqkh',
-                _attr / (_attr.size(-1) ** 0.5),
-                _attr
+                _attr / _attr.norm(dim=-1, keepdim=True),
+                _attr / _attr.norm(dim=-1, keepdim=True)
             )
 
             aff = aff.softmax(dim=-2)
