@@ -120,7 +120,7 @@ class GlitchBlock(nn.Module):
 
         std, mean = torch.std_mean(aff, dim=1)
 
-        return torch.cat([std, mean], dim=-1)
+        return std
 
 
 class SynoDecoder(nn.Module):
@@ -196,7 +196,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             k_attr=k_attr
         )
 
-        self.feat_dim = (num_frames**2) * 2
+        self.feat_dim = (num_frames**2)
 
     def forward(self, x):
         synos = self.decoder(x=x)
