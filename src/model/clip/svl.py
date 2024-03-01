@@ -31,15 +31,12 @@ class SynoBlock(nn.Module):
         d_model,
         n_head,
         n_patch,
-        n_filt,
         n_frames,
         ksize_t,
         ksize_s,
-        t_q_attr,
-        t_k_attr,
+        t_attrs,
         s_k_attr,
         s_v_attr,
-        t_flatten,
         store_attrs=[],
         attn_record=False
     ):
@@ -47,22 +44,23 @@ class SynoBlock(nn.Module):
 
         # parameters
         self.n_patch = n_patch
-        self.t_q_attr = t_q_attr
-        self.t_k_attr = t_k_attr
+        self.t_attrs = t_attrs
         self.s_k_attr = s_k_attr
         self.s_v_attr = s_v_attr
-
-        self.t_flatten = t_flatten
 
         # modules
         self.t_conv = self.make_2dconv(
             ksize_t,
-            (n_head if not self.t_flatten else 1) * 3,
-            n_filt
+            sum([
+                1 if attr in ["out", "emb"] else n_head
+                for attr in t_attrs
+            ]),
+            1
         )
+
         self.p_conv = self.make_2dconv(
             ksize_s,
-            (n_frames ** 2) * n_filt,
+            n_frames ** 2,
             1
         )
 
@@ -114,10 +112,11 @@ class SynoBlock(nn.Module):
         p = self.n_patch  # p = l ** 0.5
 
         affs = []
-        for attr in ["q", "k", "v"]:
+        for attr in self.t_attrs:
             _attr = attrs[attr][:, :, 1:]  # ignore cls token
-            if self.t_flatten:
-                _attr = _attr.flatten(3).unsqueeze(-2)
+
+            if (len(_attr.shape) == 4):
+                _attr = _attr.unsqueeze(-2)
 
             _attr = _attr.permute(0, 2, 1, 3, 4)
 
@@ -195,14 +194,11 @@ class SynoDecoder(nn.Module):
         encoder,
         num_synos,
         num_frames,
-        num_filters,
         ksize_s,
         ksize_t,
-        t_q_attr,
-        t_k_attr,
+        t_attrs,
         s_k_attr,
         s_v_attr,
-        t_flatten,
         store_attrs=[]
     ):
         super().__init__()
@@ -218,15 +214,12 @@ class SynoDecoder(nn.Module):
                 d_model=d_model,
                 n_head=n_head,
                 n_patch=n_patch,
-                n_filt=num_filters,
                 n_frames=num_frames,
                 ksize_t=ksize_t,
                 ksize_s=ksize_s,
-                t_q_attr=t_q_attr,
-                t_k_attr=t_k_attr,
+                t_attrs=t_attrs,
                 s_k_attr=s_k_attr,
                 s_v_attr=s_v_attr,
-                t_flatten=t_flatten,
                 store_attrs=store_attrs
             )
             for _ in range(encoder.transformer.layers)
@@ -284,16 +277,13 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         store_attrs=[],
         attn_record=False,
         # synoptic
-        num_synos=1,
-        num_frames=1,
-        num_filters=10,
         ksize_t=3,
         ksize_s=3,
-        t_q_attr="q",
-        t_k_attr="k",
+        num_synos=1,
+        num_frames=1,
         s_k_attr="k",
         s_v_attr="v",
-        t_flatten=False,
+        t_attrs=["q", "k", "v"],
     ):
         super(SynoVideoAttrExtractor, self).__init__(
             architecture=architecture,
@@ -306,14 +296,11 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             encoder=self.model,
             num_synos=num_synos,
             num_frames=num_frames,
-            num_filters=num_filters,
+            t_attrs=t_attrs,
             ksize_t=ksize_t,
             ksize_s=ksize_s,
-            t_q_attr=t_q_attr,
-            t_k_attr=t_k_attr,
             s_k_attr=s_k_attr,
             s_v_attr=s_v_attr,
-            t_flatten=t_flatten,
             store_attrs=store_attrs
         )
 
@@ -409,14 +396,11 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         self,
         num_synos: int = 1,
         num_frames: int = 1,
-        num_filters: int = 10,
         ksize_s: int = 3,
         ksize_t: int = 3,
-        t_q_attr: str = "q",
-        t_k_attr: str = "k",
+        t_attrs: List[str] = ["q", "k", "v"],
         s_k_attr: str = "k",
         s_v_attr: str = "v",
-        t_flatten: bool = False,
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
         pretrain: str = None,
@@ -438,15 +422,12 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             pretrain=pretrain,
             num_synos=num_synos,
             num_frames=num_frames,
-            num_filters=num_filters,
             ksize_s=ksize_s,
             ksize_t=ksize_t,
             store_attrs=store_attrs,
-            t_q_attr=t_q_attr,
-            t_k_attr=t_k_attr,
+            t_attrs=t_attrs,
             s_k_attr=s_k_attr,
             s_v_attr=s_v_attr,
-            t_flatten=t_flatten
         )
         self.model = BinaryLinearClassifier(**params)
 
@@ -554,14 +535,11 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         pretrain: str = None,
 
         num_frames: int = 1,
-        num_filters: int = 10,
         ksize_s: int = 3,
         ksize_t: int = 3,
-        t_q_attr: str = "q",
-        t_k_attr: str = "k",
+        t_attrs: List[str] = ["q", "k", "v"],
         s_k_attr: str = "k",
         s_v_attr: str = "v",
-        t_flatten: bool = False,
 
         attn_record: bool = False,
 
@@ -582,14 +560,11 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         super().__init__(
             num_frames=num_frames,
             num_synos=self.num_face_parts,
-            num_filters=num_filters,
             ksize_s=ksize_s,
             ksize_t=ksize_t,
-            t_q_attr=t_q_attr,
-            t_k_attr=t_k_attr,
+            t_attrs=t_attrs,
             s_k_attr=s_k_attr,
             s_v_attr=s_v_attr,
-            t_flatten=t_flatten,
             architecture=architecture,
             text_embed=text_embed,
             attn_record=attn_record,
