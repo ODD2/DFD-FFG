@@ -235,6 +235,15 @@ class SynoDecoder(nn.Module):
         self.feat_t_dim = n_patch**2
         self.feat_s_dim = d_model
 
+        self.se_s = nn.Sequential(
+            nn.LayerNorm(self.feat_s_dim),
+            nn.Linear(self.feat_s_dim, 1)
+        )
+        self.se_t = nn.Sequential(
+            nn.LayerNorm(self.feat_t_dim),
+            nn.Linear(self.feat_t_dim, 1)
+        )
+
     @property
     def spatial_dim(self):
         return self.feat_s_dim
@@ -268,8 +277,12 @@ class SynoDecoder(nn.Module):
         # x =  self.encoder()._finalize(x)
 
         # aggregate the layer outputs
-        y_s = sum(layer_output["y_s"])
-        y_t = sum(layer_output["y_t"])
+        y_s = torch.stack(layer_output["y_s"], dim=1)
+        y_s_w = self.se_s(y_s).squeeze(-1).softmax(dim=-1)
+        y_s = torch.einsum("nlw, nl -> nw", y_s, y_s_w)
+        y_t = torch.stack(layer_output["y_t"], dim=1)
+        y_t_w = self.se_t(y_t).squeeze(-1).softmax(dim=-1)
+        y_t = torch.einsum("nlw, nl -> nw", y_t, y_t_w)
 
         return y_s, y_t
 
