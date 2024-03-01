@@ -267,11 +267,7 @@ class SynoDecoder(nn.Module):
         # last, we are done with the encoder, therefore skipping the _finalize step.
         # x =  self.encoder()._finalize(x)
 
-        # aggregate the layer outputs
-        y_s = sum(layer_output["y_s"])
-        y_t = sum(layer_output["y_t"])
-
-        return y_s, y_t
+        return layer_output["y_s"], layer_output["y_t"]
 
 
 class SynoVideoAttrExtractor(VideoAttrExtractor):
@@ -351,6 +347,31 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         return self
 
 
+class TripleHead(nn.Module):
+    def __init__(self, spatial_dim, temporal_dim):
+        super().__init__()
+        self.s_ln = nn.LayerNorm(spatial_dim)
+        self.s_head = nn.Linear(spatial_dim, 2)
+        self.t_ln = nn.LayerNorm(temporal_dim)
+        self.t_head = nn.Linear(temporal_dim, 2)
+        self.a_head = nn.Linear(
+            temporal_dim + spatial_dim,
+            2
+        )
+
+    def forward(self, syno_s, syno_t):
+        _s = self.s_ln(syno_s)
+        _t = self.t_ln(syno_t)
+
+        logits_s = self.s_head(_s)
+        logits_t = self.t_head(_t)
+        logits_a = self.a_head(
+            torch.cat([_s, _t], dim=-1)
+        )
+
+        return logits_s, logits_t, logits_a
+
+
 class BinaryLinearClassifier(nn.Module):
     def __init__(
         self,
@@ -362,13 +383,11 @@ class BinaryLinearClassifier(nn.Module):
             *args,
             **kargs
         )
-        self.s_ln = nn.LayerNorm(self.encoder.spatial_dim)
-        self.s_head = nn.Linear(self.encoder.spatial_dim, 2)
-        self.t_ln = nn.LayerNorm(self.encoder.temporal_dim)
-        self.t_head = nn.Linear(self.encoder.temporal_dim, 2)
-        self.a_head = nn.Linear(
-            self.encoder.temporal_dim + self.encoder.spatial_dim,
-            2
+        self.layer_headers = nn.ModuleList(
+            [
+                TripleHead(self.encoder.spatial_dim, self.encoder.temporal_dim)
+                for _ in range(self.encoder.model.transformer.layers)
+            ]
         )
 
     @property
@@ -381,25 +400,20 @@ class BinaryLinearClassifier(nn.Module):
 
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
-        _s = self.s_ln(results["syno_s"])
-        _t = self.t_ln(results["syno_t"])
+        layer_logits = []
 
-        logits_s = self.s_head(_s)
-        logits_t = self.t_head(_t)
-        logits_a = self.a_head(torch.cat([_s, _t], dim=-1))
+        for header, _s, _t in zip(self.layer_headers, results["syno_s"], results["syno_t"]):
+            layer_logits.extend(header(_s, _t))
+
+        layer_logits = torch.stack(layer_logits, dim=1)
+
         logits = torch.log(
-            (
-                logits_s.softmax(dim=-1) +
-                logits_t.softmax(dim=-1) +
-                logits_a.softmax(dim=-1)
-            ) / 3 + 1e-4
+            layer_logits.softmax(dim=-1).mean(dim=1) + 1e-4
         )
 
         return dict(
             logits=logits,
-            logits_a=logits_a,
-            logits_s=logits_s,
-            logits_t=logits_t,
+            layer_logits=layer_logits,
             ** results
         )
 
@@ -473,15 +487,12 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         loss = 0
         # classification loss
         if (stage == "train"):
-            y = y.repeat(3)
-            logits = torch.cat(
-                [
-                    output["logits_s"],
-                    output["logits_t"],
-                    output["logits_a"]
-                ],
-                dim=0
-            )
+            logits = output["layer_logits"]
+
+            y = y.repeat(logits.shape[1])
+
+            logits = logits.transpose(0, 1).flatten(0, 1)
+
             if self.is_focal_loss:
                 cls_loss = focal_loss(
                     logits,
