@@ -54,7 +54,7 @@ class GlitchBlock(nn.Module):
             self.make_linear(
                 n_frames**2,
                 n_frames**2,
-                bias=False
+                bias=True
             ),
         )
 
@@ -105,6 +105,9 @@ class GlitchBlock(nn.Module):
             )
 
             aff = aff.softmax(dim=-2)
+            diag = torch.diagonal(aff, dim1=2, dim2=3)  # shape = (n,l,h,t)
+            diag = diag.permute(0, 1, 3, 2).unsqueeze(-2)
+            aff = aff - diag
 
             aff = aff.flatten(0, 1)  # shape = (n*l,t,t,h)
             aff = aff.permute(0, 3, 1, 2)  # shape = (n*l,h,t,t)
@@ -120,7 +123,7 @@ class GlitchBlock(nn.Module):
 
         std, mean = torch.std_mean(aff, dim=1)
 
-        return torch.cat([std, mean], dim=-1)
+        return std
 
 
 class SynoDecoder(nn.Module):
@@ -196,7 +199,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             k_attr=k_attr
         )
 
-        self.feat_dim = (num_frames**2) * 2
+        self.feat_dim = (num_frames**2)
 
     def forward(self, x):
         synos = self.decoder(x=x)
