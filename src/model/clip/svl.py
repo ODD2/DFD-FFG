@@ -362,13 +362,13 @@ class BinaryLinearClassifier(nn.Module):
             *args,
             **kargs
         )
-        self.s_head = nn.Sequential(
-            nn.LayerNorm(self.encoder.spatial_dim),
-            nn.Linear(self.encoder.spatial_dim, 2)
-        )
-        self.t_head = nn.Sequential(
-            nn.LayerNorm(self.encoder.temporal_dim),
-            nn.Linear(self.encoder.temporal_dim, 2)
+        self.s_ln = nn.LayerNorm(self.encoder.spatial_dim)
+        self.s_head = nn.Linear(self.encoder.spatial_dim, 2)
+        self.t_ln = nn.LayerNorm(self.encoder.temporal_dim)
+        self.t_head = nn.Linear(self.encoder.temporal_dim, 2)
+        self.a_head = nn.Linear(
+            self.encoder.temporal_dim + self.encoder.spatial_dim,
+            2
         )
 
     @property
@@ -381,15 +381,23 @@ class BinaryLinearClassifier(nn.Module):
 
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
+        _s = self.s_ln(results["syno_s"])
+        _t = self.t_ln(results["syno_t"])
 
-        logits_s = self.s_head(results["syno_s"])
-        logits_t = self.t_head(results["syno_t"])
+        logits_s = self.s_head(_s)
+        logits_t = self.t_head(_t)
+        logits_a = self.a_head(torch.cat([_s, _t], dim=-1))
         logits = torch.log(
-            logits_s.softmax(dim=-1) + logits_t.softmax(dim=-1) + 1e-4
+            (
+                logits_s.softmax(dim=-1) +
+                logits_t.softmax(dim=-1) +
+                logits_a.softmax(dim=-1)
+            ) / 3 + 1e-4
         )
 
         return dict(
             logits=logits,
+            logits_a=logits_a,
             logits_s=logits_s,
             logits_t=logits_t,
             ** results
@@ -465,11 +473,12 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         loss = 0
         # classification loss
         if (stage == "train"):
-            y = y.repeat(2)
+            y = y.repeat(3)
             logits = torch.cat(
                 [
                     output["logits_s"],
-                    output["logits_t"]
+                    output["logits_t"],
+                    output["logits_a"]
                 ],
                 dim=0
             )
