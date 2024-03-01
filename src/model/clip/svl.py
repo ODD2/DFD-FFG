@@ -58,6 +58,14 @@ class SynoBlock(nn.Module):
             1
         )
 
+        self.t_proj = nn.Sequential(
+            nn.LayerNorm(n_frames**2),
+            nn.Linear(
+                n_frames**2,
+                n_frames**2
+            ),
+        )
+
         self.p_conv = self.make_2dconv(
             ksize_s,
             n_frames ** 2,
@@ -136,8 +144,9 @@ class SynoBlock(nn.Module):
 
         aff = self.t_conv(aff)  # shape = (n*l, r, t, t) where r is number of filters
 
-        aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, r*t*t)
-        aff = aff.permute(0, 3, 1, 2)  # shape = (n, r*t*t, p, p)
+        aff = aff.unflatten(0, (b, p, p)).flatten(3)  # shape = (n, p, p, t*t)
+        aff = aff + self.t_proj(aff)
+        aff = aff.permute(0, 3, 1, 2)  # shape = (n, t*t, p, p)
 
         aff = self.p_conv(aff)  # shape = (n, 1, p, p)
 
