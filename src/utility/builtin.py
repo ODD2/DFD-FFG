@@ -37,7 +37,7 @@ class ODLightningCLI(LightningCLI):
 
         parser.add_lightning_class_args(RichProgressBar, "progress_bar")
 
-        parser.add_optimizer_args(torch.optim.AdamW)
+        parser.add_optimizer_args(torch.optim.SGD)
         parser.add_lr_scheduler_args(torch.optim.lr_scheduler.LinearLR)
 
         parser.add_argument("--notes", default="")
