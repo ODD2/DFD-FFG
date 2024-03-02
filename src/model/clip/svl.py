@@ -62,8 +62,13 @@ class SynoBlock(nn.Module):
             nn.LayerNorm(n_frames**2),
             nn.Linear(
                 n_frames**2,
-                n_frames**2
+                n_frames
             ),
+            nn.GELU(),
+            nn.Linear(
+                n_frames,
+                n_frames**2
+            )
         )
 
         self.p_conv = self.make_2dconv(
