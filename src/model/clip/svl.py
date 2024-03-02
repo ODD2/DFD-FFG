@@ -62,11 +62,11 @@ class SynoBlock(nn.Module):
             nn.LayerNorm(n_frames**2),
             nn.Linear(
                 n_frames**2,
-                n_frames
+                n_frames**2
             ),
             nn.GELU(),
             nn.Linear(
-                n_frames,
+                n_frames**2,
                 n_frames**2
             )
         )
@@ -364,12 +364,27 @@ class BinaryLinearClassifier(nn.Module):
             **kargs
         )
         self.s_ln = nn.LayerNorm(self.encoder.spatial_dim)
-        self.s_head = nn.Linear(self.encoder.spatial_dim, 2)
+        self.s_head = nn.Sequential(
+            nn.Dropout(),
+            nn.Linear(
+                self.encoder.spatial_dim,
+                2
+            )
+        )
         self.t_ln = nn.LayerNorm(self.encoder.temporal_dim)
-        self.t_head = nn.Linear(self.encoder.temporal_dim, 2)
-        self.a_head = nn.Linear(
-            self.encoder.temporal_dim + self.encoder.spatial_dim,
-            2
+        self.t_head = nn.Sequential(
+            nn.Dropout(),
+            nn.Linear(
+                self.encoder.temporal_dim,
+                2
+            ),
+        )
+        self.a_head = nn.Sequential(
+            nn.Dropout(),
+            nn.Linear(
+                self.encoder.temporal_dim + self.encoder.spatial_dim,
+                2
+            )
         )
 
     @property
