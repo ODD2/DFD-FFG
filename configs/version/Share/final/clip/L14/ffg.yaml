@@ -7,7 +7,7 @@ model:
     ksize_t: 5
     s_k_attr: 'k' 
     s_v_attr: 'emb' 
-    t_attrs: ["q","k","v","emb","out"]
+    t_attrs: ["q","k","v"]
     face_feature_path: "misc/L14_real_semantic_patches_v3_2000.pickle"
     face_parts: ["lips","skin","eyes","nose"] 
 

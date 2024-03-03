@@ -7,6 +7,6 @@ model:
     ksize_t: 5
     s_k_attr: 'k' 
     s_v_attr: 'emb' 
-    t_attrs: ["q","k","v","emb","out"]
+    t_attrs: ["q","k","v"]
 trainer:
   accumulate_grad_batches: 1
