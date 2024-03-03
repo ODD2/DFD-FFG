@@ -200,8 +200,7 @@ class FFPP(DeepFakeDataset):
                     alb.RandomResizedCrop(
                         self.n_px, self.n_px, scale=(0.7, 0.9), ratio=(1, 1)
                     ),
-                    alb.HorizontalFlip(),
-                    alb.ToGray()
+                    alb.HorizontalFlip()
                 ],
                 p=1.
             )
