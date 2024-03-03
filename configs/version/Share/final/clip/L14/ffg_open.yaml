@@ -3,6 +3,12 @@ model:
   init_args:
     num_frames: 10
     architecture: "ViT-L/14|datacomp_xl_s13b_b90k"
-    face_feature_path: "misc/L14_datacomb_real_semantic_patches_v1_2000.pickle"
+    ksize_s: 5
+    ksize_t: 5
+    s_k_attr: 'k' 
+    s_v_attr: 'emb' 
+    t_attrs: ["q","k","v","emb","out"]
+    face_feature_path: "misc/Open_L14_real_semantic_patches_v3_2000.pickle"
+    face_parts: ["lips","skin","eyes","nose"] 
 trainer:
   accumulate_grad_batches: 1

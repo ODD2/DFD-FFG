@@ -1,8 +1,0 @@
-model:
-  class_path: src.model.clip.snvl.CLIPBinaryVideoLearner
-  init_args:
-    num_layers: 12
-    num_frames: 10
-    num_queries: 1
-    architecture: ViT-L/14
-    with_frame: false

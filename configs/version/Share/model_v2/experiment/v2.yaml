@@ -1,4 +1,0 @@
-# lightning.pytorch==2.0.7
-trainer:
-  max_epochs: 20 #!!!
-  log_every_n_steps: 1 #!!!

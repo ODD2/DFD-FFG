@@ -1,8 +1,0 @@
-model:
-  class_path: src.model.clip.svl.FFGSynoVideoLearner
-  init_args:
-    num_frames: 10
-    architecture: "ViT-L/14|datacomp_xl_s13b_b90k"
-    face_feature_path: "misc/L14_datacomb_real_semantic_patches_v1_2000.pickle"
-trainer:
-  accumulate_grad_batches: 1
