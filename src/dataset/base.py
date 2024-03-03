@@ -20,7 +20,7 @@ from torch.utils.data import Dataset, DataLoader
 from typing import List, Set, Dict, Tuple, Optional, Callable, Union
 
 
-torchvision.set_video_backend("video_reader")
+# torchvision.set_video_backend("video_reader")
 
 
 class RandomDownScale(alb.core.transforms_interface.ImageOnlyTransform):

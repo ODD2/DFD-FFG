@@ -7,7 +7,8 @@ init_args:
   dir: null
   id: null
   anonymous: null
-  project: 'DFD-FFG(Experiment)'
+  project: 'ECCV'
   log_model: false
   prefix: ''
   checkpoint_name: null
+  entity: "aiiulab"

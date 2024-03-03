@@ -4,4 +4,4 @@ model:
     architecture: ViT-B/16
     num_frames: 10
 trainer:
-  accumulate_grad_batches: 8
+  accumulate_grad_batches: 1
