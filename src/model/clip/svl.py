@@ -2,14 +2,23 @@ import wandb
 import torch
 import pickle
 import random
+
 import torch.nn as nn
 import torch.nn.functional as F
 
+from operator import or_
 from typing import List
+from functools import reduce
+from enum import IntFlag, auto
 
 from src.model.base import ODBinaryMetricClassifier
 from src.model.clip import VideoAttrExtractor
 from src.utility.loss import focal_loss
+
+
+class OpMode(IntFlag):
+    S = auto()  # spatial
+    T = auto()  # temporal
 
 
 def call_module(module):
@@ -37,6 +46,7 @@ class SynoBlock(nn.Module):
         t_attrs,
         s_k_attr,
         s_v_attr,
+        op_mode,
         store_attrs=[],
         attn_record=False
     ):
@@ -48,38 +58,43 @@ class SynoBlock(nn.Module):
         self.s_k_attr = s_k_attr
         self.s_v_attr = s_v_attr
 
-        # modules
-        self.t_conv = self.make_2dconv(
-            ksize_t,
-            sum([
-                1 if attr in ["out", "emb"] else n_head
-                for attr in t_attrs
-            ]),
-            1
-        )
+        self.op_mode = op_mode
 
-        self.t_proj = nn.Sequential(
-            nn.LayerNorm(n_frames**2),
-            nn.Linear(
-                n_frames**2,
-                n_frames
-            ),
-            nn.GELU(),
-            nn.Linear(
-                n_frames,
-                n_frames**2
+        if (OpMode.T in op_mode):
+            # modules
+            self.t_conv = self.make_2dconv(
+                ksize_t,
+                sum([
+                    1 if attr in ["out", "emb"] else n_head
+                    for attr in t_attrs
+                ]),
+                1
             )
-        )
 
-        self.p_conv = self.make_2dconv(
-            ksize_s,
-            n_frames ** 2,
-            1
-        )
+            self.t_proj = nn.Sequential(
+                nn.LayerNorm(n_frames**2),
+                nn.Linear(
+                    n_frames**2,
+                    n_frames
+                ),
+                nn.GELU(),
+                nn.Linear(
+                    n_frames,
+                    n_frames**2
+                )
+            )
 
-        self.syno_embedding = nn.Parameter(
-            torch.zeros(n_synos, d_model)
-        )
+            self.p_conv = self.make_2dconv(
+                ksize_s,
+                n_frames ** 2,
+                1
+            )
+
+        if (OpMode.S in op_mode):
+
+            self.syno_embedding = nn.Parameter(
+                torch.zeros(n_synos, d_model)
+            )
 
         # attribute storage
         self.store_attrs = store_attrs
@@ -190,14 +205,20 @@ class SynoBlock(nn.Module):
 
     def forward(self, attrs):
         self.pop_attr()
-        ret_t = self.temporal_detection(attrs)
-        ret_s = self.spatial_detection(attrs)
-        y_t = ret_t.pop('y')
-        y_s = ret_s.pop('y')
-        self.set_attr(
-            **ret_s,
-            **ret_t
-        )
+        y_t = 0
+        y_s = 0
+        if OpMode.T in self.op_mode:
+            ret_t = self.temporal_detection(attrs)
+            y_t = ret_t.pop('y')
+            self.set_attr(
+                **ret_t
+            )
+        if OpMode.S in self.op_mode:
+            ret_s = self.spatial_detection(attrs)
+            y_s = ret_s.pop('y')
+            self.set_attr(
+                **ret_s
+            )
 
         return y_t, y_s
 
@@ -213,6 +234,7 @@ class SynoDecoder(nn.Module):
         t_attrs,
         s_k_attr,
         s_v_attr,
+        op_mode,
         store_attrs=[]
     ):
         super().__init__()
@@ -234,11 +256,12 @@ class SynoDecoder(nn.Module):
                 t_attrs=t_attrs,
                 s_k_attr=s_k_attr,
                 s_v_attr=s_v_attr,
+                op_mode=op_mode,
                 store_attrs=store_attrs
             )
             for _ in range(encoder.transformer.layers)
         ])
-
+        self.op_mode = op_mode
         self.feat_t_dim = n_patch**2
         self.feat_s_dim = d_model
 
@@ -297,6 +320,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
         num_frames=1,
         s_k_attr="k",
         s_v_attr="v",
+        op_mode=(OpMode.S | OpMode.T),
         t_attrs=["q", "k", "v"],
     ):
         super(SynoVideoAttrExtractor, self).__init__(
@@ -315,6 +339,7 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             ksize_s=ksize_s,
             s_k_attr=s_k_attr,
             s_v_attr=s_v_attr,
+            op_mode=op_mode,
             store_attrs=store_attrs
         )
 
@@ -356,21 +381,30 @@ class BinaryLinearClassifier(nn.Module):
     def __init__(
         self,
         *args,
+        op_mode,
         **kargs,
+
     ):
         super().__init__()
         self.encoder = SynoVideoAttrExtractor(
             *args,
-            **kargs
+            **kargs,
+            op_mode=op_mode
         )
-        self.s_ln = nn.LayerNorm(self.encoder.spatial_dim)
-        self.s_head = nn.Linear(self.encoder.spatial_dim, 2)
-        self.t_ln = nn.LayerNorm(self.encoder.temporal_dim)
-        self.t_head = nn.Linear(self.encoder.temporal_dim, 2)
-        self.a_head = nn.Linear(
-            self.encoder.temporal_dim + self.encoder.spatial_dim,
-            2
-        )
+        self.op_mode = op_mode
+        if (OpMode.S in self.op_mode):
+            self.s_ln = nn.LayerNorm(self.encoder.spatial_dim)
+            self.s_head = nn.Linear(self.encoder.spatial_dim, 2)
+
+        if (OpMode.T in self.op_mode):
+            self.t_ln = nn.LayerNorm(self.encoder.temporal_dim)
+            self.t_head = nn.Linear(self.encoder.temporal_dim, 2)
+
+        if (self.op_mode == (OpMode.T | OpMode.S)):
+            self.a_head = nn.Linear(
+                self.encoder.temporal_dim + self.encoder.spatial_dim,
+                2
+            )
 
     @property
     def transform(self):
@@ -382,25 +416,34 @@ class BinaryLinearClassifier(nn.Module):
 
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
-        _s = self.s_ln(results["syno_s"])
-        _t = self.t_ln(results["syno_t"])
+        logits_ = dict()
+        if (OpMode.S in self.op_mode):
+            _s = self.s_ln(results["syno_s"])
+            logits_s = self.s_head(_s)
+            logits_["logits_s"] = logits_s
+            logits_["logits"] = logits_s
 
-        logits_s = self.s_head(_s)
-        logits_t = self.t_head(_t)
-        logits_a = self.a_head(torch.cat([_s, _t], dim=-1))
-        logits = torch.log(
-            (
-                logits_s.softmax(dim=-1) +
-                logits_t.softmax(dim=-1) +
-                logits_a.softmax(dim=-1)
-            ) / 3 + 1e-4
-        )
+        if (OpMode.T in self.op_mode):
+            _t = self.t_ln(results["syno_t"])
+            logits_t = self.t_head(_t)
+            logits = logits_t
+            logits_["logits_t"] = logits_t
+            logits_["logits"] = logits_t
+
+        if (self.op_mode == (OpMode.S | OpMode.T)):
+            logits_a = self.a_head(torch.cat([_s, _t], dim=-1))
+            logits = torch.log(
+                (
+                    logits_s.softmax(dim=-1) +
+                    logits_t.softmax(dim=-1) +
+                    logits_a.softmax(dim=-1)
+                ) / 3 + 1e-4
+            )
+            logits_["logits_a"] = logits_a
+            logits_["logits"] = logits
 
         return dict(
-            logits=logits,
-            logits_a=logits_a,
-            logits_s=logits_s,
-            logits_t=logits_t,
+            **logits_,
             ** results
         )
 
@@ -415,6 +458,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         t_attrs: List[str] = ["q", "k", "v"],
         s_k_attr: str = "k",
         s_v_attr: str = "v",
+        op_mode: List[str] = ["S", "T"],
         architecture: str = 'ViT-B/16',
         text_embed: bool = False,
         pretrain: str = None,
@@ -429,6 +473,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
     ):
         super().__init__()
         self.save_hyperparameters()
+        op_mode = reduce(or_, [OpMode[m] for m in op_mode])
         params = dict(
             architecture=architecture,
             text_embed=text_embed,
@@ -442,6 +487,7 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
             t_attrs=t_attrs,
             s_k_attr=s_k_attr,
             s_v_attr=s_v_attr,
+            op_mode=op_mode
         )
         self.model = BinaryLinearClassifier(**params)
 
@@ -468,15 +514,9 @@ class SynoVideoLearner(ODBinaryMetricClassifier):
         loss = 0
         # classification loss
         if (stage == "train"):
-            y = y.repeat(3)
-            logits = torch.cat(
-                [
-                    output["logits_s"],
-                    output["logits_t"],
-                    output["logits_a"]
-                ],
-                dim=0
-            )
+            logits = [output[k] for k in output if "logits_" in k]
+            y = y.repeat(len(logits))
+            logits = torch.cat(logits, dim=0)
             if self.is_focal_loss:
                 cls_loss = focal_loss(
                     logits,
@@ -554,7 +594,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         t_attrs: List[str] = ["q", "k", "v"],
         s_k_attr: str = "k",
         s_v_attr: str = "v",
-
+        op_mode: List[str] = ["S", "T"],
         attn_record: bool = False,
 
         store_attrs: List[str] = [],
@@ -563,6 +603,8 @@ class FFGSynoVideoLearner(SynoVideoLearner):
         cls_weight: float = 10.0,
         label_weights: List[float] = [1, 1],
     ):
+        assert 'S' in op_mode, "FFG must include the spatial branch for operation."
+
         self.num_face_parts = len(face_parts)
         self.face_attn_attr = face_attn_attr
         self.syno_attn_attr = syno_attn_attr
@@ -576,6 +618,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             num_synos=self.num_face_parts,
             ksize_s=ksize_s,
             ksize_t=ksize_t,
+            op_mode=op_mode,
             t_attrs=t_attrs,
             s_k_attr=s_k_attr,
             s_v_attr=s_v_attr,
