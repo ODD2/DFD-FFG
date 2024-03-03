@@ -353,15 +353,12 @@ class ODDataModule(pl.LightningDataModule):
         dataloaders = {
             dtm._test_dataset.cls_name:
             dtm.test_dataloader()
-            for dtm in [
-                *self._val_datamodules,
-                *self._test_datamodules,
-            ]
+            for dtm in self._test_datamodules
         }
         return dataloaders
 
     def predict_dataloader(self):
-        raise NotImplementedError()
+        return self.test_dataloader()
 
 
 class ODDeepFakeDataModule(ODDataModule):

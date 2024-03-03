@@ -167,3 +167,26 @@ class ODBinaryMetricClassifier(ODClassifier):
 
     def on_test_epoch_end(self) -> None:
         self.shared_end_epoch_procedure('test')
+
+    # predict
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        x, y, z = batch["xyz"]
+        dts_name = batch['dts_name']
+        names = batch["names"]
+        z = {
+            _k: z[_k]
+            for _k in z
+        }
+        y = y.tolist()
+        results = self.evaluate(
+            x,
+            **z
+        )
+        probs = results["logits"].softmax(dim=-1)[:, 1].flatten().cpu()
+
+        return dict(
+            y=y,
+            probs=probs,
+            names=names,
+            dts_name=dts_name
+        )

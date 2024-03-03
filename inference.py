@@ -3,16 +3,51 @@ import yaml
 import json
 import torch
 import pickle
+import shutil
 import logging
 import warnings
 import argparse
 
+
 from os import path
+from glob import glob
 from tqdm import tqdm
 from datetime import datetime
+from lightning.pytorch import Trainer
 from lightning.pytorch.cli import LightningCLI
 from torchmetrics.classification import AUROC, Accuracy
 from src.utility.notify import send_to_telegram
+from lightning.pytorch.utilities import rank_zero_only
+from lightning.pytorch.callbacks import BasePredictionWriter
+
+
+def pred_file_format(id):
+    return os.path.join(f"{id}.pickle")
+
+
+class PredictionWriter(BasePredictionWriter):
+
+    def __init__(self, root, write_interval="epoch"):
+        super().__init__(write_interval)
+
+        self.output_dir = root
+
+    def write_on_epoch_end(
+        self,
+        trainer,
+        pl_module,
+        predictions,
+        batch_indices
+    ):
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        location = os.path.join(
+            self.output_dir,
+            pred_file_format(trainer.global_rank)
+        )
+
+        with open(location, "wb") as f:
+            pickle.dump(predictions, f)
 
 
 class StatsRecorder:
@@ -44,8 +79,8 @@ def parse_args(args=None):
     parser.add_argument("model_cfg_path", type=str)
     parser.add_argument("data_cfg_path", type=str)
     parser.add_argument("ckpt_path", type=str)
-    parser.add_argument("--precision", type=int, default=16)
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--precision", type=str, default="16")
+    parser.add_argument("--devices", type=int, default=1)
     parser.add_argument("--notes", type=str, default="")
     parser.add_argument("--no-notify", action="store_true")
     return parser.parse_args(args=args)
@@ -53,14 +88,11 @@ def parse_args(args=None):
 
 @torch.inference_mode()
 def main(args=None):
+    timestamp = datetime.utcnow().strftime("%m%dT%H%M%S")
     params = parse_args(args=args)
-    device = params.device
-    if params.precision == 32:
-        dtype = torch.float32
-    elif params.precision == 16:
-        dtype = torch.float16
-    else:
-        raise NotImplementedError()
+    root = path.split(params.model_cfg_path)[0]
+
+    pred_store = os.path.join(root, 'tmp')
 
     configure_logging()
 
@@ -86,8 +118,18 @@ def main(args=None):
         args={
             **model_config,
             **data_config,
-        },
+        }
+    )
 
+    trainer = Trainer(
+        callbacks=[
+            PredictionWriter(
+                root=pred_store,
+                write_interval="epoch"
+            )
+        ],
+        precision=params.precision,
+        devices=params.devices
     )
 
     # setup model
@@ -99,13 +141,12 @@ def main(args=None):
         print(f"Loading model from checkpoint in non-strict mode.")
         model = model.__class__.load_from_checkpoint(params.ckpt_path, strict=False)
 
-    model = model.to(device)
     model.eval()
 
     # setup dataset
     datamodule = cli.datamodule
     datamodule.prepare_data()
-    datamodule.affine_model(model)
+    datamodule.affine_model(cli.model)
     datamodule.setup('test')
 
     stats = {}
@@ -119,70 +160,78 @@ def main(args=None):
         acc_calc = Accuracy(task="BINARY", num_classes=2)
         dataset = dataloader.dataset
         dts_stats = {}
-        for batch in tqdm(dataloader):
-            x, y, z = batch["xyz"]
-            names = batch["names"]
-            x = x.to(device)
-            z = {
-                _k: z[_k].to(device)
-                for _k in z
-            }
-            y = y.tolist()
-            with torch.autocast(device_type=device, dtype=dtype):
-                results = model.evaluate(
-                    x,
-                    **z
+
+        # reset
+        if (trainer.is_global_zero):
+            shutil.rmtree(pred_store, ignore_errors=True)
+
+        # perform ddp prediction
+        batch_results = trainer.predict(
+            model=model,
+            dataloaders=[dataloader]
+        )
+
+        if (trainer.is_global_zero):
+            # fetch predict results and aggregate.
+            for pred_file in glob(os.path.join(pred_store, pred_file_format("*"))):
+
+                with open(pred_file, "rb") as f:
+                    batch_results = pickle.load(f)
+
+                for batch_result in batch_results:
+                    probs = batch_result["probs"]
+                    names = batch_result["names"]
+                    y = batch_result["y"]
+                    for prob, label, name in zip(probs, y, names):
+                        if (not name in dts_stats):
+                            dts_stats[name] = StatsRecorder(label)
+                        dts_stats[name].update(prob, label)
+
+            # compute the average probability.
+            for k in dts_stats:
+                dts_stats[k] = dts_stats[k].compute()
+
+            # add straying videos into metric calculation
+            for k, v in dataset.stray_videos.items():
+                dts_stats[k] = dict(
+                    label=v,
+                    prob=0.5,
+                    stray=1
                 )
-            probs = results["logits"].softmax(dim=-1)[:, 1].detach().cpu().tolist()
 
-            for prob, label, name in zip(probs, y, names):
-                if (not name in dts_stats):
-                    dts_stats[name] = StatsRecorder(label)
-                dts_stats[name].update(prob, label)
+            # compute the metric scores
+            dataset_labels = []
+            dataset_probs = []
+            for v in dts_stats.values():
+                dataset_labels.append(v["label"])
+                dataset_probs.append(v["prob"])
+            dataset_labels = torch.tensor(dataset_labels)
+            dataset_probs = torch.tensor(dataset_probs)
+            accuracy = acc_calc(dataset_probs, dataset_labels).item()
+            roc_auc = auc_calc(dataset_probs, dataset_labels).item()
+            accuracy = round(accuracy, 3)
+            roc_auc = round(roc_auc, 3)
+            logging.info(f'[{dts_name}] accuracy: {accuracy}, roc_auc: {roc_auc}')
+            stats[dts_name] = dts_stats
+            report[dts_name] = {
+                "accuracy": accuracy,
+                "roc_auc": roc_auc
+            }
 
-        # compute the average probability.
-        for k in dts_stats:
-            dts_stats[k] = dts_stats[k].compute()
+            # clean up
+            shutil.rmtree(pred_store, ignore_errors=True)
 
-        # add straying videos into metric calculation
-        for k, v in dataset.stray_videos.items():
-            dts_stats[k] = dict(
-                label=v,
-                prob=0.5,
-                stray=1
-            )
+    if (trainer.is_global_zero):
+        # save report and stats.
+        with open(path.join(root, f'report_{timestamp}.json'), "w") as f:
+            json.dump(report, f, sort_keys=True, indent=4, separators=(',', ': '))
 
-        # compute the metric scores
-        dataset_labels = []
-        dataset_probs = []
-        for v in dts_stats.values():
-            dataset_labels.append(v["label"])
-            dataset_probs.append(v["prob"])
-        dataset_labels = torch.tensor(dataset_labels)
-        dataset_probs = torch.tensor(dataset_probs)
-        accuracy = acc_calc(dataset_probs, dataset_labels).item()
-        roc_auc = auc_calc(dataset_probs, dataset_labels).item()
-        accuracy = round(accuracy, 3)
-        roc_auc = round(roc_auc, 3)
-        logging.info(f'[{dts_name}] accuracy: {accuracy}, roc_auc: {roc_auc}')
-        stats[dts_name] = dts_stats
-        report[dts_name] = {
-            "accuracy": accuracy,
-            "roc_auc": roc_auc
-        }
+        with open(path.join(root, f'stats_{timestamp}.pickle'), "wb") as f:
+            pickle.dump(stats, f)
 
-    # save report and stats.
-    root = path.split(params.model_cfg_path)[0]
-    timestamp = datetime.utcnow().strftime("%m%dT%H%M")
-    with open(path.join(root, f'report_{timestamp}.json'), "w") as f:
-        json.dump(report, f, sort_keys=True, indent=4, separators=(',', ': '))
-
-    with open(path.join(root, f'stats_{timestamp}.pickle'), "wb") as f:
-        pickle.dump(stats, f)
-
-    if (not params.no_notify):
-        send_to_telegram(f"Inference for '{root.split('/')[-2]}' Complete!(notes:{params.notes})")
-        send_to_telegram(json.dumps(report, sort_keys=True, indent=4, separators=(',', ': ')))
+        if (not params.no_notify):
+            send_to_telegram(f"Inference for '{root.split('/')[-2]}' Complete!(notes:{params.notes})")
+            send_to_telegram(json.dumps(report, sort_keys=True, indent=4, separators=(',', ': ')))
 
     return report
 
