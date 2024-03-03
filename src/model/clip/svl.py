@@ -184,10 +184,10 @@ class SynoBlock(nn.Module):
         s_q = self.syno_embedding.unsqueeze(0).repeat(b, 1, 1)  # shape = (b, synos, width)
 
         if (len(_k.shape) == 5):
-            _k = _k.flatten(-2)  # match shape
+            _k = _k.flatten(-2).contiguous()  # match shape
 
         if (len(_v.shape) == 5):
-            _v = _v.flatten(-2)  # match shape
+            _v = _v.flatten(-2).contiguous()  # match shape
 
         s_aff = torch.einsum(
             'nqw,ntkw->ntqk',
