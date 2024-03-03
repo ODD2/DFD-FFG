@@ -4,7 +4,7 @@ data:
     train_datamodules:
     - class_path: src.dataset.ffpp.FFPPDataModule
       init_args:
-        batch_size: 25
+        batch_size: 30
         df_types: ['REAL','DF','F2F','NT']
         compressions: ['c23']
         strategy: FORCE_PAIR
