@@ -6,7 +6,6 @@ import warnings
 import lightning.pytorch as pl
 
 from lightning.pytorch.utilities import rank_zero_only
-from inference import main as inference_entrypoint
 from src.utility.builtin import ODTrainer, ODLightningCLI
 from src.utility.notify import send_to_telegram
 torch.set_float32_matmul_precision('high')
@@ -40,47 +39,13 @@ def configure_cli():
 
 
 @rank_zero_only
-def inference(cli):
-    # inference the best model
-    model_cfg_path = os.path.join(
-        cli.trainer.log_dir,
-        cli.save_config_kwargs["config_filename"]
-    )
-    data_cfg_path = cli.config.infer_cfg
-    ckpt_path = cli.trainer.checkpoint_callback.best_model_path
-
-    # skip if inference config not provided.
-    if (len(data_cfg_path) == 0):
-        return {}
-
-    results = inference_entrypoint(
-        [model_cfg_path, data_cfg_path, ckpt_path, "--no-notify"]
-    )
-
-    # log inference results
-    cli.trainer.logger.experiment.log(
-        {
-            "/".join(["infer", dts_name, metric]): value
-            for dts_name, metrics in results.items()
-            for metric, value in metrics.items()
-        },
-        commit=True
-    )
-
-    return results
-
-
-@rank_zero_only
-def notify(cli, scores):
+def notify(cli):
     send_to_telegram(
         "Training  Complete. (id:{}/{}, notes:'{}')".format(
             cli.trainer.logger.name,
             cli.trainer.logger.version,
             cli.config.notes
         )
-    )
-    send_to_telegram(
-        json.dumps(scores, sort_keys=True, indent=4, separators=(',', ': '))
     )
 
 
@@ -128,14 +93,11 @@ def cli_main():
     #     ckpt_path="best"
     # )
 
-    # inference the best model
-    scores = inference(cli=cli)
-
     # finally
     cli.trainer.logger.experiment.finish()
 
     # notify
-    notify(cli=cli, scores=scores)
+    notify(cli=cli)
 
 
 if __name__ == "__main__":
