@@ -25,31 +25,6 @@ def pred_file_format(id):
     return os.path.join(f"{id}.pickle")
 
 
-class PredictionWriter(BasePredictionWriter):
-
-    def __init__(self, root, write_interval="epoch"):
-        super().__init__(write_interval)
-
-        self.output_dir = root
-
-    def write_on_epoch_end(
-        self,
-        trainer,
-        pl_module,
-        predictions,
-        batch_indices
-    ):
-        os.makedirs(self.output_dir, exist_ok=True)
-
-        location = os.path.join(
-            self.output_dir,
-            pred_file_format(trainer.global_rank)
-        )
-
-        with open(location, "wb") as f:
-            pickle.dump(predictions, f)
-
-
 class StatsRecorder:
     def __init__(self, label):
         self.label = label
@@ -80,7 +55,7 @@ def parse_args(args=None):
     parser.add_argument("data_cfg_path", type=str)
     parser.add_argument("ckpt_path", type=str)
     parser.add_argument("--precision", type=str, default="16")
-    parser.add_argument("--devices", type=int, default=1)
+    parser.add_argument("--devices", type=int, default=-1)
     parser.add_argument("--notes", type=str, default="")
     parser.add_argument("--no-notify", action="store_true")
     return parser.parse_args(args=args)
@@ -111,26 +86,19 @@ def main(args=None):
             "parser_mode": "omegaconf"
         },
         trainer_defaults={
-            "logger": False
+            "logger": False,
+            'precision': params.precision,
+            'devices': params.devices
         },
         auto_configure_optimizers=False,
         seed_everything_default=1019,
         args={
             **model_config,
             **data_config,
-        }
+        },
     )
 
-    trainer = Trainer(
-        callbacks=[
-            PredictionWriter(
-                root=pred_store,
-                write_interval="epoch"
-            )
-        ],
-        precision=params.precision,
-        devices=params.devices
-    )
+    trainer = cli.trainer
 
     # setup model
     model = cli.model
@@ -161,23 +129,19 @@ def main(args=None):
         dataset = dataloader.dataset
         dts_stats = {}
 
-        # reset
-        if (trainer.is_global_zero):
-            shutil.rmtree(pred_store, ignore_errors=True)
-
         # perform ddp prediction
         batch_results = trainer.predict(
             model=model,
             dataloaders=[dataloader]
         )
 
+        gathered_results = [None] * torch.distributed.get_world_size()
+        torch.distributed.all_gather_object(gathered_results, batch_results)
+        torch.distributed.barrier()
+
         if (trainer.is_global_zero):
             # fetch predict results and aggregate.
-            for pred_file in glob(os.path.join(pred_store, pred_file_format("*"))):
-
-                with open(pred_file, "rb") as f:
-                    batch_results = pickle.load(f)
-
+            for batch_results in gathered_results:
                 for batch_result in batch_results:
                     probs = batch_result["probs"]
                     names = batch_result["names"]
@@ -217,9 +181,6 @@ def main(args=None):
                 "accuracy": accuracy,
                 "roc_auc": roc_auc
             }
-
-            # clean up
-            shutil.rmtree(pred_store, ignore_errors=True)
 
     if (trainer.is_global_zero):
         # save report and stats.
