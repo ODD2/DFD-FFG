@@ -19,8 +19,7 @@ class BinaryLinearClassifier(nn.Module):
         super().__init__()
         self.encoder = VideoAttrExtractor(
             *args,
-            **kargs,
-            enable_syno=False
+            **kargs
         )
 
         self.projs = self.make_linear(self.encoder.embed_dim)
