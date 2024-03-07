@@ -40,7 +40,7 @@ class FFPP(DeepFakeDataset):
         'NT': 'NT/'
     }
 
-    COMPRESSIONS = {'c23', 'raw'}
+    COMPRESSIONS = {'c23', 'raw', 'c40'}
 
     @classmethod
     def prepare_data(cls, data_dir, compressions, vid_ext):
