@@ -3,7 +3,7 @@ data:
   init_args:
     batch_size: 50
     num_workers: 4
-    clip_duration: 2
+    clip_duration: 3
     num_frames: 10
     test_datamodules:
     - class_path: src.dataset.ffpp.FFPPDataModule

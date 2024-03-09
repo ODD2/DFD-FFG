@@ -1,7 +1,7 @@
 TYPES="CS CC BW GNC GB JPEG VC"
 LEVELS="1 2 3 4 5"
-CKPT="logs/CVPR/hwpsq3j0/checkpoints/epoch=8-step=3060.ckpt"
-SETTING="logs/CVPR/hwpsq3j0/setting.yaml"
+CKPT="logs/ECCV/otfsj0qd/checkpoints/epoch=29-step=2040.ckpt"
+SETTING="logs/ECCV/otfsj0qd/setting.yaml"
 for T in $TYPES; 
 do
     for L in $LEVELS; 
@@ -10,6 +10,7 @@ do
             $SETTING \
             "./configs/generic/robustness/$T($L).yaml" \
             $CKPT \
-            --notes "$T($L)"
+            --notes "$T($L)" \
+            --devices -1 
     done
 done

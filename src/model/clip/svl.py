@@ -201,6 +201,9 @@ class SynoBlock(nn.Module):
 
         y = s_mix.flatten(1, 2).mean(dim=1)  # shape = (b,w)
 
+        if self.attn_record:
+            self.aff = s_aff
+
         return dict(s_q=s_q, y=y)
 
     def forward(self, attrs):
@@ -235,7 +238,8 @@ class SynoDecoder(nn.Module):
         s_k_attr,
         s_v_attr,
         op_mode,
-        store_attrs=[]
+        store_attrs=[],
+        attn_record=False
     ):
         super().__init__()
         d_model = encoder.transformer.width
@@ -257,7 +261,8 @@ class SynoDecoder(nn.Module):
                 s_k_attr=s_k_attr,
                 s_v_attr=s_v_attr,
                 op_mode=op_mode,
-                store_attrs=store_attrs
+                store_attrs=store_attrs,
+                attn_record=attn_record
             )
             for _ in range(encoder.transformer.layers)
         ])
@@ -340,7 +345,8 @@ class SynoVideoAttrExtractor(VideoAttrExtractor):
             s_k_attr=s_k_attr,
             s_v_attr=s_v_attr,
             op_mode=op_mode,
-            store_attrs=store_attrs
+            store_attrs=store_attrs,
+            attn_record=attn_record
         )
 
     @property

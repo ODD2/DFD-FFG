@@ -8,9 +8,11 @@ from glob import glob
 from tqdm import tqdm
 from pathlib import Path
 from os.path import exists
+from dataclasses import dataclass
+from multiprocessing import Pool, cpu_count
 
 
-def load_args():
+def load_args(args):
     parser = argparse.ArgumentParser(
         description='Pre-processing'
     )
@@ -50,7 +52,11 @@ def load_args():
     parser.add_argument(
         '--replace', action="store_true", default=False
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        '--workers', default=int(cpu_count() / 2), type=int
+    )
+
+    args = parser.parse_args(args)
 
     return args
 
@@ -104,7 +110,7 @@ def get_main_face_data(frame_landmarks, frame_bboxes):
             bboxes == None or len(bboxes) == 0
         ):
             continue
-        assert len(landmarks) == len(bboxes)
+        assert len(landmarks) == len(bboxes), "length of landmark and bbox in frame mismatch."
         num_faces = len(landmarks)
         landmarks = np.stack(landmarks)
         bboxes = np.stack(bboxes)
@@ -206,9 +212,11 @@ def crop_driver(
     bboxes,
     landmarks,
     height,
-    width
+    width,
+    start_idx,
+    stop_idx
 ):
-    center_x, center_y = np.mean(landmarks, axis=0)
+    center_x, center_y = np.mean(landmarks[start_idx:stop_idx], axis=0)
 
     if center_y - height < 0:
         center_y = height + 1
@@ -244,7 +252,7 @@ def crop_patch(
     crop_bboxes = []
     crop_landmarks = []
 
-    assert len(frames) == len(landmarks) == len(bboxes)
+    assert len(frames) == len(landmarks) == len(bboxes), f"length of frames, landmark and bbox mismatch."
 
     length = len(frames)
 
@@ -273,9 +281,11 @@ def crop_patch(
         crop_frame, crop_landmark, crop_bbox = crop_driver(
             transformed_frame,
             transformed_bboxes,
-            transformed_landmarks[start_idx:stop_idx],
+            transformed_landmarks,
             crop_height // 2,
-            crop_width // 2
+            crop_width // 2,
+            start_idx=start_idx,
+            stop_idx=stop_idx
         )
         crop_frames.append(crop_frame)
         crop_landmarks.append(crop_landmark)
@@ -308,7 +318,7 @@ def get_video_frame_data(fdata_path):
         frame_landmarks = [frame["landmarks"] for frame in frame_data]
         frame_bboxes = [frame["bboxes"] for frame in frame_data]
 
-    assert len(frame_landmarks) == len(frame_bboxes)
+    assert len(frame_landmarks) == len(frame_bboxes), f"length of landmark and bbox mismatch."
 
     if (len(frame_landmarks[0][0]) == 98):
         _98_to_68_mapping = [
@@ -330,71 +340,103 @@ def get_video_frame_data(fdata_path):
     return frame_landmarks, frame_bboxes
 
 
-def main():
-    args = load_args()
-    reference = np.load(args.mean_face)
+@dataclass
+class RunnerParams:
+    video_path: str
+    args: argparse.Namespace
 
-    video_root = os.path.join(args.root_dir, args.video_dir)
-    fdata_root = os.path.join(args.root_dir, args.fdata_dir)
-    crop_root = os.path.join(args.root_dir, args.crop_dir)
 
-    video_files = sorted(glob(os.path.join(video_root, args.glob_exp)))
+def runner(params: RunnerParams):
+    args = params.args
+    video_path = params.video_path
 
-    for video_path in tqdm(video_files):
-        try:
-            rel_video_path = os.path.splitext(os.path.relpath(video_path, video_root))[0]
-            fdata_path = os.path.join(fdata_root, rel_video_path) + ".pickle"
-            crop_video_path = os.path.join(crop_root, args.video_dir, rel_video_path) + ".avi"
-            crop_fdata_path = os.path.join(crop_root, args.fdata_dir, rel_video_path) + ".pickle"
+    try:
+        rel_video_path = os.path.splitext(os.path.relpath(video_path, args.video_root))[0]
+        fdata_path = os.path.join(args.fdata_root, rel_video_path) + ".pickle"
+        crop_video_path = os.path.join(args.crop_root, args.video_dir, rel_video_path) + ".avi"
+        crop_fdata_path = os.path.join(args.crop_root, args.fdata_dir, rel_video_path) + ".pickle"
 
-            if (exists(f"{crop_video_path}") and exists(f"{crop_fdata_path}") and not args.replace):
-                continue
+        if (exists(f"{crop_video_path}") and exists(f"{crop_fdata_path}") and not args.replace):
+            return
 
-            fps, frames = get_video_frames(video_path)
+        fps, frames = get_video_frames(video_path)
 
-            frame_landmarks, frame_bboxes = get_video_frame_data(fdata_path)
+        frame_landmarks, frame_bboxes = get_video_frame_data(fdata_path)
 
-            assert len(frames) == len(frame_landmarks) == len(frame_bboxes)
+        assert len(frames) == len(frame_landmarks) == len(frame_bboxes)
 
-            landmarks, bboxes = get_main_face_data(
-                frame_landmarks=frame_landmarks,
-                frame_bboxes=frame_bboxes
+        landmarks, bboxes = get_main_face_data(
+            frame_landmarks=frame_landmarks,
+            frame_bboxes=frame_bboxes
+        )
+
+        if (not len(landmarks) == len(frames)):
+            raise Exception("landmark and frame count mismatch.")
+
+        crop_frames, crop_landmarks, crop_bboxes = crop_patch(
+            frames,
+            landmarks,
+            bboxes,
+            args.reference,
+            window_margin=args.window_margin,
+            start_idx=args.start_idx,
+            stop_idx=args.stop_idx,
+            crop_height=args.crop_height,
+            crop_width=args.crop_width
+        )
+
+        # save video
+        os.makedirs(os.path.dirname(crop_video_path), exist_ok=True)
+
+        save_video(crop_video_path, crop_frames, fps)
+
+        # save frame data
+        os.makedirs(os.path.dirname(crop_fdata_path), exist_ok=True)
+
+        with open(crop_fdata_path, "wb") as f:
+            crop_bboxes = crop_bboxes.reshape(-1, 2, 2)
+            pickle.dump(
+                [
+                    dict(landmarks=[landmarks], bboxes=[bboxes])
+                    for landmarks, bboxes in zip(crop_landmarks, crop_bboxes)
+                ],
+                f
             )
+    except Exception as e:
+        print(video_path, e)
+    # print("Video Process Error:",video_path, e)
 
-            if (not len(landmarks) == len(frames)):
-                raise Exception("landmark and frame count mismatch.")
 
-            crop_frames, crop_landmarks, crop_bboxes = crop_patch(
-                frames,
-                landmarks,
-                bboxes,
-                reference,
-                window_margin=args.window_margin,
-                start_idx=args.start_idx,
-                stop_idx=args.stop_idx,
-                crop_height=args.crop_height,
-                crop_width=args.crop_width
-            )
+def main(args=None):
+    args = load_args(args)
+    args.reference = np.load(args.mean_face)
 
-            # save video
-            os.makedirs(os.path.dirname(crop_video_path), exist_ok=True)
+    args.video_root = os.path.join(args.root_dir, args.video_dir)
+    args.fdata_root = os.path.join(args.root_dir, args.fdata_dir)
+    args.crop_root = os.path.join(args.root_dir, args.crop_dir)
 
-            save_video(crop_video_path, crop_frames, fps)
+    video_files = sorted(glob(os.path.join(args.video_root, args.glob_exp)))
 
-            # save frame data
-            os.makedirs(os.path.dirname(crop_fdata_path), exist_ok=True)
+    if (args.workers == 0):
+        for video_path in tqdm(video_files):
+            runner(RunnerParams(args=args, video_path=video_path))
 
-            with open(crop_fdata_path, "wb") as f:
-                crop_bboxes = crop_bboxes.reshape(-1, 2, 2)
-                pickle.dump(
+    else:
+        with Pool(args.workers) as p:
+            for _ in tqdm(
+                p.imap_unordered(
+                    runner,
                     [
-                        dict(landmarks=[landmarks], bboxes=[bboxes])
-                        for landmarks, bboxes in zip(crop_landmarks, crop_bboxes)
-                    ],
-                    f
-                )
-        except Exception as e:
-            print(video_path, e)
+                        RunnerParams(
+                            args=args,
+                            video_path=video_path
+                        )
+                        for video_path in video_files
+                    ]
+                ),
+                total=len(video_files)
+            ):
+                continue
 
 
 if __name__ == "__main__":
