@@ -552,12 +552,7 @@ class BinaryLinearClassifier(nn.Module):
             *args,
             **kargs
         )
-        self.proj = nn.Linear(
-            self.encoder.embed_dim,
-            self.encoder.embed_dim // 8,
-            bias=False
-        )
-        self.head = self.make_linear(self.encoder.embed_dim // 8)
+        self.head = self.make_linear(self.encoder.embed_dim)
 
     def make_linear(self, embed_dim):
         linear = nn.Linear(
@@ -579,10 +574,8 @@ class BinaryLinearClassifier(nn.Module):
 
     def forward(self, x, *args, **kargs):
         results = self.encoder(x)
-        projs = self.proj(results["reps"])
-        logits = self.head(projs)
+        logits = self.head(results["reps"])
         return dict(
-            projs=projs,
             logits=logits,
             ** results
         )
