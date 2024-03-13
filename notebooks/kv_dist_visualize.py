@@ -226,13 +226,13 @@ features = extract_features(encoder, clip)
 #     df_types=["REAL"],
 #     sample_num=1000
 # )
-with open("misc/L14_real_semantic_patches_v2_2000.pickle", "rb") as f:
+with open("misc/L14_real_semantic_patches_v3_2000.pickle", "rb") as f:
     semantic_patches = pickle.load(f)
 
 
 # %%
 plot_params = dict(vmin=0, vmax=1)
-part = "lips"
+part = "eyes"
 # %%
 print(features[0]["q"].shape)
 
@@ -259,26 +259,41 @@ print(features[0]["q"].shape)
 
 # %%
 evals = {}
+# evals["q"] = driver(
+#     features, semantic_patch_cos_sim, part=part, s="q",
+#     semantic_patches=semantic_patches, n_patch=n_patch
+# )["q"][::2]
+# evals["k"] = driver(
+#     features, semantic_patch_cos_sim, part=part, s="k",
+#     semantic_patches=semantic_patches, n_patch=n_patch
+# )["k"][::2]
+# evals["v"] = driver(
+#     features, semantic_patch_cos_sim, part=part, s="v",
+#     semantic_patches=semantic_patches, n_patch=n_patch
+# )["v"][::2]
+# evals["out"] = driver(
+#     features, semantic_patch_cos_sim, part=part, s="out",
+#     semantic_patches=semantic_patches, n_patch=n_patch
+# )["k"][6:24]
+# evals["emb"] = driver(
+#     features, semantic_patch_cos_sim, part=part, s="emb",
+#     semantic_patches=semantic_patches, n_patch=n_patch
+# )["k"][6:24]
+
+
 evals["q"] = driver(
-    features, semantic_patch_cos_sim, part=part, s="q",
+    features, semantic_patch_cos_sim, part=part,
     semantic_patches=semantic_patches, n_patch=n_patch
-)["k"][6:24]
+)["q"][::2]
 evals["k"] = driver(
-    features, semantic_patch_cos_sim, part=part, s="k",
+    features, semantic_patch_cos_sim, part=part,
     semantic_patches=semantic_patches, n_patch=n_patch
-)["k"][6:24]
+)["k"][::2]
 evals["v"] = driver(
-    features, semantic_patch_cos_sim, part=part, s="v",
+    features, semantic_patch_cos_sim, part=part,
     semantic_patches=semantic_patches, n_patch=n_patch
-)["k"][6:24]
-evals["out"] = driver(
-    features, semantic_patch_cos_sim, part=part, s="out",
-    semantic_patches=semantic_patches, n_patch=n_patch
-)["k"][6:24]
-evals["emb"] = driver(
-    features, semantic_patch_cos_sim, part=part, s="emb",
-    semantic_patches=semantic_patches, n_patch=n_patch
-)["k"][6:24]
+)["v"][::2]
+
 plotter(
     evals,
     "",

@@ -5,7 +5,7 @@ import pickle
 subject = "k"
 face_parts = ["lips", "skin", "eyes", "nose"]
 
-with open("misc/L14_real_semantic_patches_v2_2000.pickle", "rb") as f:
+with open("misc/L14_real_semantic_patches_v3_2000.pickle", "rb") as f:
     data = pickle.load(f)
 
 layers = len(data[subject][face_parts[0]])

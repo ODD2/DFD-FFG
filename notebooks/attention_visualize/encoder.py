@@ -70,11 +70,9 @@ def interpret(
     clips = clips.to(DEVICE)
     num_patch = model.encoder.model.patch_num
     num_patch_per_side = int(math.sqrt(num_patch))
-    image_attn_blocks = list(
-        dict(model.encoder.model.transformer.resblocks.named_children()).values()
-    )
+    image_attn_blocks = list(model.encoder.decoder.decoder_layers)
 
-    logits = model(clips)["logits"]
+    logits = model(clips)["logits_s"]  # TODO: make sure to select the correct logits
     indicator = logits[:, logit_index].sum(dim=0)
 
     relevance_storage = []
@@ -90,7 +88,7 @@ def interpret(
 
     for target_layer in range(beg_layer, end_layer):
         model.zero_grad()
-        aff = image_attn_blocks[target_layer].attn.s_aff
+        aff = image_attn_blocks[target_layer].aff
         # aff.shape = [b,t,synos,patches,head]
         grad = torch.autograd.grad(
             indicator,
@@ -111,11 +109,16 @@ def interpret(
         else:
             raise NotImplementedError()
 
-        # reshape to restore (n,h,p^2+1,p^2+1)
-        val = val.permute((4, 0, 1, 2, 3))
-
+        ###### This part is for the multi-head attention map visualization ######
+        # reshape to restore (h, n, t, q, p^2)
+        # val = val.permute((4, 0, 1, 2, 3))
         # average over each heads.
-        val = val.clamp(min=0).mean(dim=0)
+        # val = val.clamp(min=0).mean(dim=0)
+        ##########################################################################
+
+        ###### This part is for the single-head attention map visualization ######
+        val = val.clamp(min=0)
+        ##########################################################################
 
         # fetch the specified query
         relevance = val[:, :, [query_idx]].mean(dim=0)
@@ -157,6 +160,9 @@ def draw_flatten_heatmap(relevance: torch.Tensor, scale=500):
         relevance[relevance > 1] = 1
     elif scale == -1:
         relevance /= relevance.max()
+    elif scale == -2:
+        relevance = relevance - relevance.min()
+        relevance /= (relevance.max() - relevance.min())
     else:
         raise NotImplementedError()
 
@@ -221,23 +227,23 @@ model_configs = [
     # ("125", FFGSynoVideoLearner, "logs/DFD-FFG(CVPR-EXP)/ib5mz44a/checkpoints/epoch=6-step=1694.ckpt"),
     # ("125", SynoVideoLearner, "logs/CVPR/vmobdb0k/checkpoints/epoch=9-step=2420.ckpt"),
     # ("125", FFGSynoVideoLearner, "logs/CVPR/szfhgbkm/checkpoints/epoch=7-step=2040.ckpt"),
-    ("125", FFGSynoVideoLearner, "logs/DFD-FFG(CVPR-EXP)/ib5mz44a/checkpoints/epoch=6-step=1694.ckpt"),
-
-
-
+    ("125", FFGSynoVideoLearner, "logs/ECCV/otfsj0qd/checkpoints/epoch=29-step=2040.ckpt"),
+    # ("125", FFGSynoVideoLearner, "logs/ECCV/8gbspxsz/checkpoints/epoch=29-step=2040.ckpt"),
+    # ("125", SynoVideoLearner, "logs/ECCV/8gbspxsz/checkpoints/epoch=29-step=2040.ckpt")
 ]
 
 scenarios = [
     (
         syno,  # syno num
         1,  # logit
-        ("all", 50000),  # mode,scaler
+        # ("all", 50000),  # mode,scaler
+        # ("all", -2),
         # ("grad", 500),
-        # ("cam", 100),
+        # ("cam", 100),git r
+        ("cam", -2),
         -1,  # layers(from tail)
         # "layer"  # aspect
         "frame"
-
     )
     for syno in [0, 1, 2, 3]
 ]

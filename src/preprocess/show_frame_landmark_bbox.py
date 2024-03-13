@@ -23,8 +23,8 @@ def get_video_frames(video_path):
 def get_video_frame_data(fdata_path):
     with open(fdata_path, "rb") as f:
         frame_data = pickle.load(f)
-        frame_landmarks = [frame["landmarks"] for frame in frame_data]
-        frame_bboxes = [frame["bboxes"] for frame in frame_data]
+        frame_landmarks = [frame["landmarks"] if not frame is None else [] for frame in frame_data]
+        frame_bboxes = [frame["bboxes"] if not frame is None else [] for frame in frame_data]
 
     assert len(frame_landmarks) == len(frame_bboxes)
 
@@ -35,8 +35,8 @@ def get_video_frame_data(fdata_path):
 
 
 # %%
-video_path = "/home/od/stock/FaceForensicC23/cropped/videos/DF/001_870.avi"
-fdata_path = "/home/od/stock/FaceForensicC23/cropped/frame_data/DF/001_870.pickle"
+video_path = "/home/od/stock/FaceForensicC23/videos/real/950.mp4"
+fdata_path = "/home/od/stock/FaceForensicC23/frame_data/real/950.pickle"
 
 fps, frames = get_video_frames(video_path)
 frame_landmarks, frame_bboxes = get_video_frame_data(fdata_path)
@@ -47,8 +47,9 @@ import random
 # %%
 idx = random.randrange(0, len(frames))
 plt.imshow(cv2.cvtColor(frames[idx], cv2.COLOR_BGR2RGB))
-plt.scatter(frame_landmarks[idx][0][:, 0], frame_landmarks[idx][0][:, 1], s=20, c="r")
-plt.scatter(frame_bboxes[idx][0][:, 0], frame_bboxes[idx][0][:, 1], s=20, c="g")
+for lm, bbox in zip(frame_landmarks[idx], frame_bboxes[idx]):
+    plt.scatter(lm[:, 0], lm[:, 1], s=1, c="r")
+    plt.scatter(bbox[:, 0], bbox[:, 1], s=1, c="g")
 
 
 # %%

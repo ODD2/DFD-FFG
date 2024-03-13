@@ -14,7 +14,7 @@ def load_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root-dir", type=str, default="")
     parser.add_argument("--video-dir", type=str, default="videos")
-    parser.add_argument("--fdata-dir", type=str, default="frame data")
+    parser.add_argument("--fdata-dir", type=str, default="frame_data")
     parser.add_argument("--glob-exp", type=str, default="*/*")
     parser.add_argument("--split-num", type=int, default=1)
     parser.add_argument("--part-num", type=int, default=1)

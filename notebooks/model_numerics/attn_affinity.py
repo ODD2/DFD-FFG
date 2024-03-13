@@ -18,7 +18,8 @@ if __name__ == "__main__":
             FFGSynoVideoLearner,
             "logs/ECCV/0v90yk5x/checkpoints/epoch=11-step=816.ckpt",
             extra_params=dict(
-                store_attrs=["s_q"]
+                store_attrs=["s_q"],
+                attn_store=True
             )
         )
         model, preprocess = result.model, result.transform
@@ -27,12 +28,15 @@ if __name__ == "__main__":
         image = Image.open("notebooks/woman.png")
         image = preprocess(image).unsqueeze(0).unsqueeze(0).to("cuda").repeat(1, 10, 1, 1, 1)
         results = model.forward(image)
-        layer_attrs = results["layer_attrs"]
-        for i, l_attr in enumerate(layer_attrs):
-            s_q = l_attr["s_q"].flatten(0, 1)
+        n_patch = model.encoder.n_patch
+        attn_layers = model.encoder.decoder.decoder_layers
+        for i, blk in enumerate(attn_layers):
+            aff = blk.aff
+            print(aff.shape)
+            aff = aff.flatten(0, 2).mean(0).unflatten(-1, (n_patch, n_patch))
             print(
                 f"{i}:\n",
-                1 + torch.nn.functional.cosine_similarity(s_q.unsqueeze(1), s_q.unsqueeze(0), dim=-1)
+                aff
             )
 
 # %%
