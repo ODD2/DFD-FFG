@@ -10,21 +10,39 @@ def parse_args():
     parser.add_argument("action", type=str)
 
     parser.add_argument(
-        '--dts_root',
+        '--dts-root',
         type=str,
         default="/scratch1/users/od/FaceForensicC23/"
     )
 
     parser.add_argument(
-        '--rob_dir',
+        '--glob-exp',
+        type=str,
+        default="*/*/*/*.mp4"
+    )
+
+    parser.add_argument(
+        '--rob-dir',
         type=str,
         default="robustness"
     )
 
     parser.add_argument(
-        '--fd_dir',
+        '--fd-dir',
         type=str,
         default="frame_data"
+    )
+
+    parser.add_argument(
+        '--crop-dir',
+        type=str,
+        default="cropped_robust"
+    )
+
+    parser.add_argument(
+        '--mean-face',
+        type=str,
+        default="./misc/20words_mean_face.npy"
     )
 
     parser.add_argument(
@@ -43,27 +61,25 @@ if __name__ == "__main__":
     rob_root = os.path.join(args.dts_root, args.rob_dir)
     fd_root = os.path.join(args.dts_root, args.fd_dir)
 
-    dftypes = ["DF", "NT", "FS", "F2F", "real"]
     type_list = ['CS', 'CC', 'BW', 'GNC', 'GB', 'JPEG', 'VC']
     level_list = ['1', '2', '3', '4', '5']
 
     if args.action == "setup":
         for t in type_list:
             for l in level_list:
-                for df in dftypes:
-                    p1 = os.path.join(fd_root, df)
-                    p2 = os.path.join(fd_root, t, l)
-                    os.makedirs(p2, exist_ok=True)
-                    p2 = os.path.join(p2, df)
-                    os.system(f"ln -s {p1} {p2}")
+                p1 = os.path.join(fd_root)
+                p2 = os.path.join(fd_root, t)
+                os.makedirs(p2, exist_ok=True)
+                p2 = os.path.join(p2, l)
+                os.system(f"ln -s {p1} {p2}")
     elif args.action == "run":
         crop_entrance(
             [
                 "--root-dir", args.dts_root,
                 "--video-dir", args.rob_dir,
-                "--mean-face", "./misc/20words_mean_face.npy",
-                "--glob-exp", "*/*/*/*.mp4",
-                "--crop-dir", "cropped_robust"
+                "--mean-face", args.mean_face,
+                "--glob-exp", args.glob_exp,
+                "--crop-dir", args.crop_dir
             ]
         )
     elif args.action == "clean":

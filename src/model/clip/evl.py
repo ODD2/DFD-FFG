@@ -680,4 +680,5 @@ if __name__ == "__main__":
     model.to("cuda")
     logit = model(torch.randn(9, frames, 3, 224, 224).to("cuda"))["logits"]
     logit.sum().backward()
+    print([k for k, v in model.named_parameters() if v.requires_grad])
     print("done")

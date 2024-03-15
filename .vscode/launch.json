@@ -10,15 +10,16 @@
             "request": "launch",
             // "module": "notebooks.text_prompt.gender_alignment",
             // "module": "notebooks.ffg_similarity.syno_and_cls",
-            // "module": "notebooks.attention_visualize.encoder",
+            "module": "src.model.clip.__init__",
             // "module": "notebooks.perturb_sensitivity",
             // "module": "src.model.clip.evl",
             // "module": "src.model.clip.svl",
             // "module": "notebooks.sanity",
-            "module": "notebooks.fetch_facial_feature",
+            // "module": "notebooks.fetch_facial_feature",
+            // "module": "notebooks.model_numerics.syno_query",
             "justMyCode": true,
             "env": {
-                "CUDA_VISIBLE_DEVICES": "0"
+                "CUDA_VISIBLE_DEVICES": "9"
             }
         },
         {
@@ -40,24 +41,15 @@
                 "configs/version/Share/final/base.yaml",
                 "--trainer.precision=16",
                 "--config",
-                "configs/version/Share/final/clip/L14/ffg.yaml",
-                // "configs/version/Share/final/clip/L14/svl.yaml",
+                "configs/version/Share/final/clip/L14/evl.yaml",
                 "--config",
                 "configs/generic/test.yaml",
                 "--trainer.devices=1",
-                // "--model.init_args.kernel_size=5",
-                "--model.init_args.ksize_t=5",
-                "--model.init_args.ksize_s=5",
-                // "--model.init_args.num_filters=10",
-                "--model.init_args.num_frames=10",
-                "--data.init_args.num_frames=10",
-                "--model.init_args.t_attrs=[q,k,v,out,emb]",
-                // "--model.init_args.t_q_attr=k",
-                "--model.init_args.s_k_attr=k",
-                "--model.init_args.s_v_attr=out",
-                // "--model.init_args.t_flatten=True",
                 "--data.init_args.train_datamodules.init_args.batch_size=5",
             ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "9"
+            }
         },
         {
             "name": "Python: Inference",
@@ -67,19 +59,14 @@
             "justMyCode": false,
             "args": [
                 // "--config",
-                "logs/ECCV-Pre/9rp3b9ti/setting.yaml",
-                "configs/generic/inference.yaml",
+                "logs/ECCV/814lrxu3/setting.yaml",
+                "./configs/generic/robustness/CS(1).yaml",
                 // "logs/DFD-FFG(v100)/24ugmkpg/checkpoints/epoch=7-step=1341.ckpt",
-                "logs/ECCV-Pre/9rp3b9ti/checkpoints/epoch=25-step=2132.ckpt"
+                "logs/ECCV/814lrxu3/checkpoints/epoch=27-step=1904.ckpt",
+                "--devices=8"
             ]
         },
-        {
-            "name": "Python: Test",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "notebooks.lr_finder",
-            "justMyCode": false
-        },
+       
         {
             "name": "Python: FFPPDataModule",
             "type": "debugpy",
@@ -87,6 +74,15 @@
             "module": "src.dataset.ffpp",
             "justMyCode": false
         },
+
+        {
+            "name": "Python: FFPPSSLDataModule",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.dataset.ffpp_ssl",
+            "justMyCode": false
+        },
+
         {
             "name": "Python: CDFDataModule",
             "type": "debugpy",
@@ -116,10 +112,24 @@
             "justMyCode": false
         },
         {
+            "name": "Python: CLIPRAL",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.model.clip.ral",
+            "justMyCode": false
+        },
+        {
             "name": "Python: CLIPSVL",
             "type": "debugpy",
             "request": "launch",
             "module": "src.model.clip.svl",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: CLIPEVL",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.model.clip.evl",
             "justMyCode": false
         },
         {
@@ -153,7 +163,10 @@
                 "--root-dir=/scratch1/users/od/FaceForensicC23/",
                 "--video-dir=videos",
                 "--replace",
-                "--glob-exp=real/950.mp4"
+                "--glob-exp=real/003.mp4",
+                "--crop-dir=cropped_test",
+                // "--d-rate=0.5",
+                "--workers=0"
             ]
         },
     ],

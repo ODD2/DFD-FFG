@@ -13,9 +13,9 @@ import random
 import cv2
 from tqdm import tqdm
 from dataclasses import dataclass
-from distortions import (block_wise, color_contrast, color_saturation,
-                         gaussian_blur, gaussian_noise_color, jpeg_compression,
-                         video_compression)
+from .distortions import (block_wise, color_contrast, color_saturation,
+                          gaussian_blur, gaussian_noise_color, jpeg_compression,
+                          video_compression)
 
 
 def get_distortion_parameter(type, level):
@@ -66,18 +66,23 @@ def apply_distortion_log(type, level):
 def parse_args():
     parser = argparse.ArgumentParser(description='Add a distortion to video.')
     parser.add_argument(
-        '--dts_root',
+        '--dts-root',
         type=str,
         default="/scratch1/users/od/FaceForensicC23/"
     )
     parser.add_argument(
-        '--vid_dir',
+        '--vid-dir',
         type=str,
         default="videos"
     )
+    parser.add_argument(
+        '--glob-exp',
+        type=str,
+        default="*/*.mp4"
+    )
 
     parser.add_argument(
-        '--rob_dir',
+        '--rob-dir',
         type=str,
         default="robustness"
     )
@@ -206,7 +211,7 @@ if __name__ == "__main__":
     rob_dir = args.rob_dir
 
     video_root = os.path.join(dts_root, vid_dir)
-    glob_exp = "*/*"
+    glob_exp = args.glob_exp
 
     videos = sorted(glob(os.path.join(video_root, glob_exp)))
 
