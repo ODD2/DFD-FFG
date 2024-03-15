@@ -18,51 +18,6 @@ from .distortions import (block_wise, color_contrast, color_saturation,
                           video_compression)
 
 
-def get_distortion_parameter(type, level):
-    param_dict = dict()  # a dict of list
-    param_dict['CS'] = [0.4, 0.3, 0.2, 0.1, 0.0]  # smaller, worse
-    param_dict['CC'] = [0.85, 0.725, 0.6, 0.475, 0.35]  # smaller, worse
-    param_dict['BW'] = [16, 32, 48, 64, 80]  # larger, worse
-    param_dict['GNC'] = [0.001, 0.002, 0.005, 0.01, 0.05]  # larger, worse
-    param_dict['GB'] = [7, 9, 13, 17, 21]  # larger, worse
-    param_dict['JPEG'] = [2, 3, 4, 5, 6]  # larger, worse
-    param_dict['VC'] = [30, 32, 35, 38, 40]  # larger, worse
-
-    # level starts from 1, list starts from 0
-    return param_dict[type][level - 1]
-
-
-def get_distortion_function(type):
-    func_dict = dict()  # a dict of function
-    func_dict['CS'] = color_saturation
-    func_dict['CC'] = color_contrast
-    func_dict['BW'] = block_wise
-    func_dict['GNC'] = gaussian_noise_color
-    func_dict['GB'] = gaussian_blur
-    func_dict['JPEG'] = jpeg_compression
-    func_dict['VC'] = video_compression
-
-    return func_dict[type]
-
-
-def apply_distortion_log(type, level):
-    if type == 'CS':
-        print(f'Apply level-{level} color saturation change distortion...')
-    elif type == 'CC':
-        print(f'Apply level-{level} color contrast change distortion...')
-    elif type == 'BW':
-        print(f'Apply level-{level} local block-wise distortion...')
-    elif type == 'GNC':
-        print(f'Apply level-{level} white Gaussian noise in color components '
-              'distortion...')
-    elif type == 'GB':
-        print(f'Apply level-{level} Gaussian blur distortion...')
-    elif type == 'JPEG':
-        print(f'Apply level-{level} JPEG compression distortion...')
-    elif type == 'VC':
-        print(f'Apply level-{level} video compression distortion...')
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description='Add a distortion to video.')
     parser.add_argument(
@@ -106,6 +61,51 @@ def parse_args():
     args = parser.parse_args()
 
     return args
+
+
+def get_distortion_parameter(type, level):
+    param_dict = dict()  # a dict of list
+    param_dict['CS'] = [0.4, 0.3, 0.2, 0.1, 0.0]  # smaller, worse
+    param_dict['CC'] = [0.85, 0.725, 0.6, 0.475, 0.35]  # smaller, worse
+    param_dict['BW'] = [16, 32, 48, 64, 80]  # larger, worse
+    param_dict['GNC'] = [0.001, 0.002, 0.005, 0.01, 0.05]  # larger, worse
+    param_dict['GB'] = [7, 9, 13, 17, 21]  # larger, worse
+    param_dict['JPEG'] = [2, 3, 4, 5, 6]  # larger, worse
+    param_dict['VC'] = [30, 32, 35, 38, 40]  # larger, worse
+
+    # level starts from 1, list starts from 0
+    return param_dict[type][level - 1]
+
+
+def get_distortion_function(type):
+    func_dict = dict()  # a dict of function
+    func_dict['CS'] = color_saturation
+    func_dict['CC'] = color_contrast
+    func_dict['BW'] = block_wise
+    func_dict['GNC'] = gaussian_noise_color
+    func_dict['GB'] = gaussian_blur
+    func_dict['JPEG'] = jpeg_compression
+    func_dict['VC'] = video_compression
+
+    return func_dict[type]
+
+
+def apply_distortion_log(type, level):
+    if type == 'CS':
+        print(f'Apply level-{level} color saturation change distortion...')
+    elif type == 'CC':
+        print(f'Apply level-{level} color contrast change distortion...')
+    elif type == 'BW':
+        print(f'Apply level-{level} local block-wise distortion...')
+    elif type == 'GNC':
+        print(f'Apply level-{level} white Gaussian noise in color components '
+              'distortion...')
+    elif type == 'GB':
+        print(f'Apply level-{level} Gaussian blur distortion...')
+    elif type == 'JPEG':
+        print(f'Apply level-{level} JPEG compression distortion...')
+    elif type == 'VC':
+        print(f'Apply level-{level} video compression distortion...')
 
 
 @dataclass
