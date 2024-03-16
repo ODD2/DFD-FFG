@@ -637,6 +637,7 @@ class FFPP(DeepFakeDataset):
 
         entity_clips = []
         entity_masks = []
+        entity_indices = []
 
         # desire all clips in the video under pack mode, else fetch only the clip of index.
         if (self.pack):
@@ -683,10 +684,14 @@ class FFPP(DeepFakeDataset):
             logging.debug(f"Sample Stride: {video_sample_stride}")
 
             # fetch frames of clip duration
+            indices = []
             for sample_idx in range(self.num_frames):
                 vid_reader.seek(video_sample_offset + sample_idx * video_sample_stride)
                 frame = next(vid_reader)
                 frames.append(frame["data"])
+                fps = vid_reader.get_metadata()['video']['fps'][0]
+                pts = frame["pts"]
+                indices.append(round(pts * fps))
 
             # augment the data only while training.
             frames, replay = self.training_augmentations(frames, replay)
@@ -714,9 +719,11 @@ class FFPP(DeepFakeDataset):
                     frames,
                     padding
                 )
+                indices += ([-1] * diff)
 
             entity_clips.append(frames)
             entity_masks.append(mask)
+            entity_indices.append(indices)
             logging.debug(
                 "Video Clip: {}({}s~{}s), Completed!".format(
                     vid_path,
@@ -734,7 +741,8 @@ class FFPP(DeepFakeDataset):
             "comp": comp,
             "video_name": video_name,
             "df_type": df_type,
-            "vid_path": vid_path
+            "vid_path": vid_path,
+            "indices": entity_indices
         }
         entity_data = {
             "clips": entity_clips,

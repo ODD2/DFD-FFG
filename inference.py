@@ -1,4 +1,5 @@
 import os
+import sys
 import yaml
 import json
 import torch
@@ -10,19 +11,21 @@ import argparse
 
 
 from os import path
-from glob import glob
-from tqdm import tqdm
 from datetime import datetime
-from lightning.pytorch import Trainer
-from lightning.pytorch.cli import LightningCLI
 from torchmetrics.classification import AUROC, Accuracy
+from src.utility.builtin import ODTrainer, ODLightningCLI
 from src.utility.notify import send_to_telegram
-from lightning.pytorch.utilities import rank_zero_only
-from lightning.pytorch.callbacks import BasePredictionWriter
 
 
-def pred_file_format(id):
-    return os.path.join(f"{id}.pickle")
+def parse_args(args=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("model_cfg_path", type=str)
+    parser.add_argument("data_cfg_path", type=str)
+    parser.add_argument("model_ckpt_path", type=str)
+    parser.add_argument("--precision", type=str, default="16")
+    parser.add_argument("--devices", type=int, default=-1)
+    parser.add_argument("--notes", type=str, default='')
+    return parser.parse_args(args=args)
 
 
 class StatsRecorder:
@@ -49,65 +52,22 @@ def configure_logging():
     warnings.filterwarnings(action="ignore")
 
 
-def parse_args(args=None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("model_cfg_path", type=str)
-    parser.add_argument("data_cfg_path", type=str)
-    parser.add_argument("ckpt_path", type=str)
-    parser.add_argument("--precision", type=str, default="16")
-    parser.add_argument("--devices", type=int, default=-1)
-    parser.add_argument("--notes", type=str, default="")
-    parser.add_argument("--no-notify", action="store_true")
-    return parser.parse_args(args=args)
-
-
 @torch.inference_mode()
-def main(args=None):
-    timestamp = datetime.utcnow().strftime("%m%dT%H%M%S")
-    params = parse_args(args=args)
-    root = path.split(params.model_cfg_path)[0]
+def inference_driver(cli, cfg_dir, ckpt_path, notes=None):
 
-    pred_store = os.path.join(root, 'tmp')
-
-    configure_logging()
-
-    with open(params.model_cfg_path) as f:
-        config = yaml.safe_load(f)
-        model_config = {k: config[k] for k in ["model"]}
-
-    with open(params.data_cfg_path) as f:
-        config = yaml.safe_load(f)
-        data_config = {k: config[k] for k in ["data"]}
-
-    cli = LightningCLI(
-        run=False,
-        save_config_callback=None,
-        parser_kwargs={
-            "parser_mode": "omegaconf"
-        },
-        trainer_defaults={
-            "logger": False,
-            'precision': params.precision,
-            'devices': params.devices
-        },
-        auto_configure_optimizers=False,
-        seed_everything_default=1019,
-        args={
-            **model_config,
-            **data_config,
-        },
-    )
+    timestamp = datetime.now().strftime("%m%dT%H%M%S")
 
     trainer = cli.trainer
 
     # setup model
     model = cli.model
+
     try:
-        model = model.__class__.load_from_checkpoint(params.ckpt_path)
+        model = model.__class__.load_from_checkpoint(ckpt_path)
     except Exception as e:
         print(f"Unable to load model from checkpoint in strict mode: {e}")
         print(f"Loading model from checkpoint in non-strict mode.")
-        model = model.__class__.load_from_checkpoint(params.ckpt_path, strict=False)
+        model = model.__class__.load_from_checkpoint(ckpt_path, strict=False)
 
     model.eval()
 
@@ -184,18 +144,49 @@ def main(args=None):
 
     if (trainer.is_global_zero):
         # save report and stats.
-        with open(path.join(root, f'report_{timestamp}.json'), "w") as f:
+        with open(path.join(cfg_dir, f'report_{timestamp}.json'), "w") as f:
             json.dump(report, f, sort_keys=True, indent=4, separators=(',', ': '))
 
-        with open(path.join(root, f'stats_{timestamp}.pickle'), "wb") as f:
+        with open(path.join(cfg_dir, f'stats_{timestamp}.pickle'), "wb") as f:
             pickle.dump(stats, f)
 
-        if (not params.no_notify):
-            send_to_telegram(f"Inference for '{root.split('/')[-2]}' Complete!(notes:{params.notes})")
+        if (not notes is None):
+            send_to_telegram(f"Inference for '{cfg_dir.split('/')[-2]}' Complete!(notes:{notes})")
             send_to_telegram(json.dumps(report, sort_keys=True, indent=4, separators=(',', ': ')))
 
     return report
 
 
 if __name__ == "__main__":
-    main()
+    configure_logging()
+
+    params = parse_args()
+
+    cli = ODLightningCLI(
+        run=False,
+        trainer_class=ODTrainer,
+        save_config_callback=None,
+        parser_kwargs={
+            "parser_mode": "omegaconf"
+        },
+        auto_configure_optimizers=False,
+        seed_everything_default=1019,
+        args=[
+            '-c', params.model_cfg_path,
+            '-c', params.data_cfg_path,
+            '--trainer.logger=null',
+            f'--trainer.devices={params.devices}',
+            f'--trainer.precision={params.precision}',
+        ],
+    )
+
+    cfg_dir = os.path.split(params.model_cfg_path)[0]
+    ckpt_path = params.model_ckpt_path
+    notes = params.notes
+
+    inference_driver(
+        cli=cli,
+        cfg_dir=cfg_dir,
+        ckpt_path=ckpt_path,
+        notes=notes
+    )

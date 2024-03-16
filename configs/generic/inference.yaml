@@ -1,10 +1,6 @@
 data:
   class_path: src.dataset.base.ODDeepFakeDataModule
   init_args:
-    batch_size: 30
-    num_workers: 4
-    clip_duration: 3
-    num_frames: 10
     test_datamodules:
     - class_path: src.dataset.ffpp.FFPPDataModule
       init_args:
