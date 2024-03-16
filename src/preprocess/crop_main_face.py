@@ -48,7 +48,12 @@ def load_args(args):
     parser.add_argument(
         '--crop-dir', default="cropped", type=str, help="folder destination to save the process results."
     )
-
+    parser.add_argument(
+        '--max-pad-secs', default=3, type=int, help="maximum seconds to pad for the untrack faces."
+    )
+    parser.add_argument(
+        '--min-crop-rate', default=0.9, type=float, help="minimum ratio of duration with tracked faces."
+    )
     parser.add_argument(
         '--d-rate', type=float, default=0.2, help="the maximum distance between the landmarks according to the ratio of face size."
     )
@@ -73,7 +78,7 @@ class FaceData:
         self.lm = [_lm]
         self.bbox = [_bbox]
         self.idx = [_idx]
-        self.count = 0
+        self.paddings = 0
 
     def last_landmark(self):
         return self.ema_lm
@@ -98,9 +103,7 @@ class FaceData:
         )
 
     def pad(self):
-        self.lm.append(None)
-        self.bbox.append(None)
-        self.idx.append(None)
+        self.paddings += 1
 
     def add(self, _lm, _bbox, _idx):
         self.ema_lm = self.ema_lm * 0.5 + _lm * 0.5
@@ -108,13 +111,15 @@ class FaceData:
         self.lm.append(_lm)
         self.bbox.append(_bbox)
         self.idx.append(_idx)
-        self.count += 1
+
+        if (self.paddings > 0):
+            self.paddings = 0
 
     def __len__(self):
         return len(self.lm)
 
 
-def get_main_face_data(frame_landmarks, frame_bboxes, d_rate):
+def get_main_face_data(frame_landmarks, frame_bboxes, d_rate, max_paddings):
     # post-process the extracted frame faces.
     # create face identity database to track landmark motion.
     face_dbs = []
@@ -154,6 +159,10 @@ def get_main_face_data(frame_landmarks, frame_bboxes, d_rate):
                 ):
                     matched_indices[closest_idx] = dict(d=proximity, db_idx=db_idx)
 
+            # (hacky!) pad current frame in advance, in further process, tracked faces will reset the padding.
+            for db_face in face_dbs:
+                db_face.pad()
+
             # finalize and update the database entity.
             for face_idx, save_data in matched_indices.items():
                 face_dbs[save_data["db_idx"]].add(landmarks[face_idx], bboxes[face_idx], frame_idx)
@@ -166,9 +175,9 @@ def get_main_face_data(frame_landmarks, frame_bboxes, d_rate):
                     face_dbs.append(FaceData(landmark, bbox, frame_idx))
 
     # report only the most consistant face in the video.
-    main_face = sorted(face_dbs, key=lambda x: x.count, reverse=True)[0]
+    main_face = sorted(face_dbs, key=lambda x: len(x), reverse=True)[0]
 
-    return main_face.lm, main_face.bbox
+    return main_face.lm, main_face.bbox, main_face.idx
 
 
 def save_video(
@@ -258,6 +267,7 @@ def crop_patch(
     frames,
     landmarks,
     bboxes,
+    indices,
     reference,
     window_margin,
     start_idx,
@@ -265,17 +275,24 @@ def crop_patch(
     crop_size,
     target_size,
 ):
+    assert len(landmarks) == len(bboxes), f"length of landmarks and bboxes mismatch."
+
     crop_frames = []
     crop_bboxes = []
     crop_landmarks = []
 
-    assert len(frames) == len(landmarks) == len(bboxes), f"length of frames, landmark and bbox mismatch."
-
     length = len(frames)
+
+    # preprocess for window margin
+    _landmarks = [None for _ in range(length)]
+    _bboxes = [None for _ in range(length)]
+    for i, idx in enumerate(indices):
+        _landmarks[idx] = landmarks[i]
+        _bboxes[idx] = bboxes[i]
 
     for frame_idx in range(length):
         # check landmark exists
-        if (landmarks[frame_idx] is None or bboxes[frame_idx] is None):
+        if (not frame_idx in indices):
             crop_frame = np.zeros((crop_size, crop_size, 3), dtype=np.uint8)
             crop_landmark = None
             crop_bbox = None
@@ -286,23 +303,23 @@ def crop_patch(
             # smoothed landmarks
             smoothed_landmarks = np.mean(
                 [
-                    landmarks[i]
+                    _landmarks[i]
                     for i in range(frame_idx - margin, frame_idx + margin + 1)
-                    if (not landmarks[i] is None)
+                    if (not _landmarks[i] is None)
                 ],
                 axis=0
             )
-            smoothed_landmarks += (landmarks[frame_idx].mean(axis=0) - smoothed_landmarks.mean(axis=0))
+            smoothed_landmarks += (_landmarks[frame_idx].mean(axis=0) - smoothed_landmarks.mean(axis=0))
             # smoothed bboxes
             smoothed_bboxes = np.mean(
                 [
-                    bboxes[i]
+                    _bboxes[i]
                     for i in range(frame_idx - margin, frame_idx + margin + 1)
-                    if (not bboxes[i] is None)
+                    if (not _bboxes[i] is None)
                 ],
                 axis=0
             )
-            smoothed_bboxes += (bboxes[frame_idx].mean(axis=0) - smoothed_bboxes.mean(axis=0))
+            smoothed_bboxes += (_bboxes[frame_idx].mean(axis=0) - smoothed_bboxes.mean(axis=0))
             # affine transform
             transformed_frame, transformed_landmarks, transformed_bboxes = affine_transform(
                 frame,
@@ -355,22 +372,36 @@ def get_video_frame_data(fdata_path):
 
     assert len(frame_landmarks) == len(frame_bboxes), f"length of landmark and bbox mismatch."
 
-    if (len(frame_landmarks[0][0]) == 98):
-        _98_to_68_mapping = [
-            0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24,
-            26, 28, 30, 32, 33, 34, 35, 36, 37, 42, 43, 44,
-            45, 46, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-            61, 63, 64, 65, 67, 68, 69, 71, 72, 73, 75, 76,
-            77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88,
-            89, 90, 91, 92, 93, 94, 95
+    _98_to_68_mapping = [
+        0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24,
+        26, 28, 30, 32, 33, 34, 35, 36, 37, 42, 43, 44,
+        45, 46, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+        61, 63, 64, 65, 67, 68, 69, 71, 72, 73, 75, 76,
+        77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88,
+        89, 90, 91, 92, 93, 94, 95
+    ]
+
+    frame_landmarks = [
+        [
+            (lm[_98_to_68_mapping] if len(lm) == 98 else lm)
+            for lm in landmarks
         ]
+        for landmarks in frame_landmarks
+    ]
 
-        frame_landmarks = [[lm[_98_to_68_mapping] for lm in landmarks]for landmarks in frame_landmarks]
+    # assert len(frame_landmarks[0][0]) == 68, "landmark should be 68 points."
 
-    assert len(frame_landmarks[0][0]) == 68, "landmark should be 68 points."
-
-    if (len(frame_bboxes[0][0].shape) == 1):
-        frame_bboxes = [[bbox.reshape((2, 2)) for bbox in bboxes]for bboxes in frame_bboxes]
+    frame_bboxes = [
+        [
+            (
+                bbox.reshape((2, 2))
+                if len(bbox.shape) == 1 else
+                bbox
+            )
+            for bbox in bboxes
+        ]
+        for bboxes in frame_bboxes
+    ]
 
     return frame_landmarks, frame_bboxes
 
@@ -400,19 +431,21 @@ def runner(params: RunnerParams):
 
         assert len(frames) == len(frame_landmarks) == len(frame_bboxes)
 
-        landmarks, bboxes = get_main_face_data(
+        landmarks, bboxes, indices = get_main_face_data(
             frame_landmarks=frame_landmarks,
             frame_bboxes=frame_bboxes,
-            d_rate=args.d_rate
+            d_rate=args.d_rate,
+            max_paddings=fps * args.max_pad_secs
         )
 
-        if (not len(landmarks) == len(frames)):
-            raise Exception("landmark and frame count mismatch.")
+        if (len(landmarks) < len(frames) * args.min_crop_rate):
+            raise Exception("number of tracked landmarks below the minimum ratio of frames.")
 
         crop_frames, crop_landmarks, crop_bboxes = crop_patch(
             frames,
             landmarks,
             bboxes,
+            indices,
             args.reference,
             window_margin=args.window_margin,
             start_idx=args.start_idx,
