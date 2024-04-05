@@ -1,4 +1,5 @@
 import os
+import gc
 import json
 import torch
 import logging
@@ -8,6 +9,7 @@ import lightning.pytorch as pl
 from lightning.pytorch.utilities import rank_zero_only
 from src.utility.builtin import ODTrainer, ODLightningCLI
 from src.utility.notify import send_to_telegram
+from inference import inference_driver
 torch.set_float32_matmul_precision('high')
 
 
@@ -38,14 +40,45 @@ def configure_cli():
     )
 
 
+def inference(cli):
+    # inference the best model
+    cfg_dir = cli.trainer.log_dir
+    ckpt_path = cli.trainer.checkpoint_callback.best_model_path
+
+    results = inference_driver(
+        cli=cli,
+        cfg_dir=cfg_dir,
+        ckpt_path=ckpt_path,
+    )
+
+    # log inference results
+    cli.trainer.logger.experiment.log(
+        {
+            "/".join(["infer", dts_name, metric]): value
+            for dts_name, metrics in results.items()
+            for metric, value in metrics.items()
+        },
+        commit=True
+    )
+
+    return results
+
+
 @rank_zero_only
-def notify(cli):
+def notify(cli, scores={}):
     send_to_telegram(
         "Training  Complete. (id:{}/{}, notes:'{}')".format(
             cli.trainer.logger.name,
             cli.trainer.logger.version,
             cli.config.notes
         )
+    )
+
+    if (len(scores.keys()) == 0):
+        return
+
+    send_to_telegram(
+        json.dumps(scores, sort_keys=True, indent=4, separators=(',', ': '))
     )
 
 
@@ -85,19 +118,20 @@ def cli_main():
         policy="now"
     )
 
-    # test the best model.
-    # cli.trainer.test(
-    #     cli.model,
-    #     datamodule=cli.datamodule,
-    #     verbose=False,
-    #     ckpt_path="best"
-    # )
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    # inference the best model.
+    scores = inference(cli=cli)
 
     # finally
     cli.trainer.logger.experiment.finish()
 
     # notify
-    notify(cli=cli)
+    notify(
+        cli=cli,
+        scores=scores
+    )
 
 
 if __name__ == "__main__":

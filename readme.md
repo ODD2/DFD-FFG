@@ -7,6 +7,7 @@ pip install torch torchaudio torchvision
 pip install lightning  lightning[pytorch-extra] 
 pip install albumentations matplotlib ftfy regex opencv-python opencv-python-headless 
 pip install pandas wandb open_clip_torch av
+pip install face_alignment
 ```
 
 ## Method 2
