@@ -286,6 +286,7 @@ class VResidualAttentionBlock(nn.Module):
         self,
         d_model: int,
         n_head: int,
+        mlp_ratio: int,
         block_index: int,
         attn_record: bool = False,
         store_attrs: List[str] = [],
@@ -303,9 +304,9 @@ class VResidualAttentionBlock(nn.Module):
 
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(OrderedDict([
-            ("c_fc", nn.Linear(d_model, d_model * 4)),
+            ("c_fc", nn.Linear(d_model, int(d_model * mlp_ratio))),
             ("gelu", QuickGELU()),
-            ("c_proj", nn.Linear(d_model * 4, d_model))
+            ("c_proj", nn.Linear(int(d_model * mlp_ratio), d_model))
         ]))
         self.ln_2 = LayerNorm(d_model)
 
@@ -349,6 +350,7 @@ class VTransformer(nn.Module):
         width: int,
         layers: int,
         heads: int,
+        mlp_ratio: int,
         num_frames: int,
         attn_record: bool = False,
         store_attrs: List[str] = []
@@ -363,6 +365,7 @@ class VTransformer(nn.Module):
                 d_model=width,
                 n_head=heads,
                 block_index=i,
+                mlp_ratio=mlp_ratio,
                 attn_record=attn_record,
                 store_attrs=store_attrs
             )
@@ -384,6 +387,7 @@ class VisionTransformer(nn.Module):
         layers: int,
         heads: int,
         output_dim: int,
+        mlp_ratio: int,
         num_frames: int,
         attn_record: bool = False,
         store_attrs: List[str] = [],
@@ -412,6 +416,7 @@ class VisionTransformer(nn.Module):
             width,
             layers,
             heads,
+            mlp_ratio,
             num_frames=num_frames,
             # generic
             attn_record=attn_record,
@@ -474,6 +479,7 @@ class CLIP(nn.Module):
         vision_layers: Union[Tuple[int, int, int, int], int],
         vision_width: int,
         vision_patch_size: int,
+        vision_mlp_ratio: int,
         # text
         context_length: int,
         vocab_size: int,
@@ -508,6 +514,7 @@ class CLIP(nn.Module):
                 layers=vision_layers,
                 heads=vision_heads,
                 output_dim=embed_dim,
+                mlp_ratio=vision_mlp_ratio,
                 store_attrs=store_attrs,
                 ** model_kargs
             )
@@ -647,6 +654,10 @@ def build_model(state_dict: dict, **model_kargs):
             ]
         )
         vision_patch_size = state_dict["visual.conv1.weight"].shape[-1]
+        vision_mlp_ratio = (
+            state_dict["visual.transformer.resblocks.0.mlp.c_fc.weight"].shape[0] /
+            state_dict["visual.transformer.resblocks.0.mlp.c_fc.weight"].shape[1]
+        )
         grid_size = round(
             (state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
         image_resolution = vision_patch_size * grid_size
@@ -664,6 +675,7 @@ def build_model(state_dict: dict, **model_kargs):
         output_width = round(
             (state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)
         vision_patch_size = None
+        vision_mlp_ratio = None
         assert output_width ** 2 + \
             1 == state_dict["visual.attnpool.positional_embedding"].shape[0]
         image_resolution = output_width * 32
@@ -673,12 +685,11 @@ def build_model(state_dict: dict, **model_kargs):
     vocab_size = state_dict["token_embedding.weight"].shape[0]
     transformer_width = state_dict["ln_final.weight"].shape[0]
     transformer_heads = transformer_width // 64
-    transformer_layers = len(
-        set(k.split(".")[2] for k in state_dict if k.startswith("transformer.resblocks")))
+    transformer_layers = len(set(k.split(".")[2] for k in state_dict if k.startswith("transformer.resblocks")))
 
     model = CLIP(
         embed_dim,
-        image_resolution, vision_layers, vision_width, vision_patch_size,
+        image_resolution, vision_layers, vision_width, vision_patch_size, vision_mlp_ratio,
         context_length, vocab_size, transformer_width, transformer_heads, transformer_layers,
         **model_kargs
     )

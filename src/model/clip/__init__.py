@@ -12,13 +12,14 @@ def load_model(architecture, **kargs):
     params = architecture.split('|')
 
     clip_arch = params[0]
-    model, transform = CLIP.load(
-        clip_arch,
-        "cpu",
-        **kargs
-    )
+    if (len(params) == 1):
+        model, transform = CLIP.load(
+            clip_arch,
+            "cpu",
+            **kargs
+        )
 
-    if (len(params) == 2):
+    elif (len(params) == 2):
         open_pretrain = params[1]
 
         _model, _, _ = open_clip.create_model_and_transforms(
@@ -26,18 +27,12 @@ def load_model(architecture, **kargs):
             pretrained=open_pretrain,
             device="cpu"
         )
-        try:
-            model.load_state_dict(
-                _model.state_dict(),
-                strict=True)
-        except:
-            conflicts = model.load_state_dict(
-                _model.state_dict(),
-                strict=False
-            )
-            logging.warning(
-                f"OpenCLIP pretrain weights loading, disabling strict mode with conflicts:\n{conflicts}"
-            )
+
+        model, transform = CLIP.load(
+            _model.state_dict(),
+            "cpu",
+            **kargs
+        )
         del _model
 
     elif (len(params) > 2):
@@ -132,6 +127,6 @@ class VideoAttrExtractor(nn.Module):
 
 if __name__ == "__main__":
     VideoAttrExtractor(
-        "ViT-B/16",
+        "ViT-L/14|laion2b_s32b_b82k",
         text_embed=False
     )

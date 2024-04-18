@@ -103,7 +103,7 @@ def available_models() -> List[str]:
     return list(_MODELS.keys())
 
 
-def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu", jit: bool = False, download_root: str = None, **model_kargs):
+def load(provider: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu", jit: bool = False, download_root: str = None, **model_kargs):
     """Load a CLIP model
 
     Parameters
@@ -128,24 +128,37 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
     preprocess : Callable[[PIL.Image], torch.Tensor]
         A torchvision transform that converts a PIL image into a tensor that the returned model can take as its input
     """
-    if name in _MODELS:
-        model_path = _download(_MODELS[name], download_root or os.path.expanduser("~/.cache/clip"))
-    elif os.path.isfile(name):
-        model_path = name
-    else:
-        raise RuntimeError(f"Model {name} not found; available models = {available_models()}")
 
-    with open(model_path, 'rb') as opened_file:
+    if type(provider) == str:
+        name = provider
+        if name in _MODELS:
+            model_path = _download(_MODELS[name], download_root or os.path.expanduser("~/.cache/clip"))
+        elif os.path.isfile(name):
+            model_path = name
+        else:
+            raise RuntimeError(f"Model {name} not found; available models = {available_models()}")
+
         try:
-            # loading JIT archive
-            model = torch.jit.load(opened_file, map_location=device if jit else "cpu").eval()
-            state_dict = None
+            with open(model_path, 'rb') as opened_file:
+                # loading JIT archive
+                model = torch.jit.load(opened_file, map_location=device if jit else "cpu").eval()
+                state_dict = None
         except RuntimeError:
-            # loading saved state dict
-            if jit:
-                warnings.warn(f"File {model_path} is not a JIT archive. Loading as a state dict instead")
-                jit = False
-            state_dict = torch.load(opened_file, map_location="cpu")
+            with open(model_path, 'rb') as opened_file:
+                # loading saved state dict
+                if jit:
+                    warnings.warn(f"File {model_path} is not a JIT archive. Loading as a state dict instead")
+                    jit = False
+                state_dict = torch.load(opened_file, map_location="cpu")
+
+    elif type(provider) == dict or issubclass(type(provider), dict):
+        state_dict = provider
+        if jit:
+            warnings.warn(f"Providing state dict, which is not a JIT archive file path.")
+        jit = False
+
+    else:
+        raise Exception("Invalid model provider")
 
     if not jit:
         model = build_model(state_dict or model.state_dict(), **model_kargs).to(device)
