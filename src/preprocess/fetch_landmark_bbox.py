@@ -10,7 +10,7 @@ from glob import glob
 import face_alignment
 
 
-def load_args():
+def load_args(args):
     parser = argparse.ArgumentParser()
     parser.add_argument("--root-dir", type=str, default="")
     parser.add_argument("--video-dir", type=str, default="videos")
@@ -20,7 +20,7 @@ def load_args():
     parser.add_argument("--part-num", type=int, default=1)
     parser.add_argument("--batch", type=int, default=1)
     parser.add_argument("--max-res", type=int, default=800)
-    args = parser.parse_args()
+    args = parser.parse_args(args)
 
     assert args.part_num > 0 and args.split_num > 0, "split and part value should be > 0"
 
@@ -87,14 +87,14 @@ def landmark_extract(fn, org_path, batch_size, max_res):
         cap_org.release()
 
 
-def main():
+def main(args=None):
     # This file extract video landmarks from a given folder.
     # In addition, the landmarks are tracked with landmarks from previous frames.
     # By doing so, we expect to extract the most consistently appeared faces from a given video.
     # Note that under 'pack' save mode, the extracted faces must match the length of the video.
     # That's to say, if there exists a single frame without appearing faces in the video, the extract operation fails.
 
-    args = load_args()
+    args = load_args(args=args)
 
     model = face_alignment.FaceAlignment(
         face_alignment.LandmarksType.TWO_D,
@@ -126,7 +126,7 @@ def main():
         return
 
     for i in tqdm(range(n_videos)):
-        lm_path = video_files[i].replace(args.video_dir, args.lm_dir).replace(video_ext, '.pickle')
+        lm_path = video_files[i].replace(args.video_dir, args.fdata_dir).replace(video_ext, '.pickle')
 
         if (os.path.exists(lm_path)):
             continue

@@ -18,7 +18,8 @@ conda env create -f environment.yml
 
 # Environment Variables
 ```shell
-# The variables are set to send notification through Telegram. Please refer to the Telegram tutorial on how to create a chatbot and access the API_TOKEN and CHAT_ID.
+# The variables are set to send notification through Telegram.
+# Please refer to the Telegram tutorial on how to create a chatbot and access the API_TOKEN and CHAT_ID.
 API_TOKEN=''
 CHAT_ID=''
 ```
