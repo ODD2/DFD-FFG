@@ -654,7 +654,7 @@ class FFGSynoVideoLearner(SynoVideoLearner):
             self.face_features = self.face_features.unsqueeze(1)
 
         for i, dec_blk in enumerate(self.model.encoder.decoder.decoder_layers):
-            dec_blk.syno_embedding.data = self.face_features[i].squeeze(0)
+            dec_blk.syno_embedding.data = self.face_features[i].squeeze(0).data.clone()
 
     def shared_step(self, batch, stage):
         result = super().shared_step(batch, stage)
