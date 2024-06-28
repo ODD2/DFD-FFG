@@ -42,6 +42,7 @@ class ODLightningCLI(LightningCLI):
 
         parser.add_argument("--notes", default="")
         parser.add_argument("--ckpt_path", default=None)
+        parser.add_argument("--ckpt_mode", default="cont")
 
 
 class ODTrainer(Trainer):

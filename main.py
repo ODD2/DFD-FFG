@@ -101,11 +101,21 @@ def cli_main():
     cli.datamodule.affine_model(cli.model)
     cli.datamodule.affine_trainer(cli.trainer)
 
+    # determine the purpose of the given checkpoint
+    cont_ckpt_path = None
+    if not cli.config.ckpt_path is None:
+        if cli.config.ckpt_mode == "cont":
+            cont_ckpt_path = cli.config.ckpt_path
+        elif cli.config.ckpt_mode == "tune":
+            cli.model.load_state_dict(torch.load(cli.config.ckpt_path)["state_dict"])
+        else:
+            raise NotImplementedError()
+
     # run
     cli.trainer.fit(
         cli.model,
         datamodule=cli.datamodule,
-        ckpt_path=cli.config.ckpt_path
+        ckpt_path=cont_ckpt_path
     )
 
     # after training:
