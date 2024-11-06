@@ -189,15 +189,30 @@ class SynoBlock(nn.Module):
         if (len(_v.shape) == 5):
             _v = _v.flatten(-2).contiguous()  # match shape
 
+        # ===============================
+        # Version 1: Original Attention Module (Square Normalized)
+        # s_aff = torch.einsum(
+        #     'nqw,ntkw->ntqk',
+        #     s_q / (s_q.size(-1) ** 0.5),
+        #     _k
+        # )
+
+        # s_aff = s_aff.softmax(dim=-1)
+
+        # Version 2: Modified Attention Module (Cosine Similarity)
         s_aff = torch.einsum(
             'nqw,ntkw->ntqk',
-            s_q / (s_q.size(-1) ** 0.5),
-            _k
+            s_q / (s_q.norm(dim=-1, keepdim=True) + 1e-4),
+            _k / (_k.norm(dim=-1, keepdim=True) + 1e-4)
         )
 
-        s_aff = s_aff.softmax(dim=-1)
-
-        s_mix = torch.einsum('ntql,ntlw->ntqw', s_aff, _v)
+        s_aff = (s_aff * 100).softmax(dim=-1)
+        # ===============================
+        s_mix = torch.einsum(
+            'ntql,ntlw->ntqw',
+            s_aff,
+            _v
+        )
 
         y = s_mix.flatten(1, 2).mean(dim=1)  # shape = (b,w)
 
@@ -732,6 +747,207 @@ class FFGSynoVideoLearner(SynoVideoLearner):
                 batch_size=x.shape[0]
             )
             result["loss"] += cls_sim * self.ffg_weight
+
+        return result
+
+
+class FFESynoVideoLearner(SynoVideoLearner):
+    def __init__(
+        self,
+        # ffg
+        face_feature_path: str,
+        face_parts: List[str] = [
+            "lips",
+            "skin",
+            "eyes",
+            "nose"
+        ],
+        face_attn_attr: str = "k",
+        syno_attn_attr: str = "s_q",
+        ffg_temper: float = 30,
+        ffg_weight: float = 1.5,
+        ffg_layers: int = -1,
+        ffg_reverse: bool = False,
+        ffe_weight: float = 100,
+        grad_temper: float = 100,
+
+        # generic
+        architecture: str = 'ViT-B/16',
+        text_embed: bool = False,
+        pretrain: str = None,
+
+        num_frames: int = 1,
+        ksize_s: int = 3,
+        ksize_t: int = 3,
+        t_attrs: List[str] = ["q", "k", "v"],
+        s_k_attr: str = "k",
+        s_v_attr: str = "v",
+        op_mode: List[str] = ["S", "T"],
+        attn_record: bool = True,
+
+        store_attrs: List[str] = [],
+        is_focal_loss: bool = True,
+
+        cls_weight: float = 10.0,
+        label_weights: List[float] = [1, 1],
+    ):
+        assert 'S' in op_mode, "FFG must include the spatial branch for operation."
+
+        self.num_face_parts = len(face_parts)
+        self.face_attn_attr = face_attn_attr
+        self.syno_attn_attr = syno_attn_attr
+        self.ffg_temper = ffg_temper
+        self.ffg_weight = ffg_weight
+        self.ffg_layers = ffg_layers
+        self.ffg_reverse = ffg_reverse
+        self.ffe_weight = ffe_weight
+        self.grad_temper = grad_temper
+
+        super().__init__(
+            num_frames=num_frames,
+            num_synos=self.num_face_parts,
+            ksize_s=ksize_s,
+            ksize_t=ksize_t,
+            op_mode=op_mode,
+            t_attrs=t_attrs,
+            s_k_attr=s_k_attr,
+            s_v_attr=s_v_attr,
+            architecture=architecture,
+            text_embed=text_embed,
+            attn_record=attn_record,
+            pretrain=pretrain,
+            store_attrs=set([*store_attrs, self.syno_attn_attr]),
+            cls_weight=cls_weight,
+            label_weights=label_weights,
+            is_focal_loss=is_focal_loss
+        )
+
+        self.save_hyperparameters()
+
+        with open(face_feature_path, "rb") as f:
+            _face_features = pickle.load(f)
+            self.face_features = torch.stack(
+                [
+                    torch.stack([
+                        _face_features[self.face_attn_attr][p][l]
+                        for p in face_parts
+                    ])
+                    for l in range(self.model.encoder.model.transformer.layers)
+                ]
+            )
+            self.face_features = self.face_features.unsqueeze(1)
+
+        for i, dec_blk in enumerate(self.model.encoder.decoder.decoder_layers):
+            dec_blk.syno_embedding.data = self.face_features[i].squeeze(0).data.clone()
+
+    def shared_step(self, batch, stage):
+        result = super().shared_step(batch, stage)
+
+        if (stage == "train"):
+            dts_name = result["dts_name"]
+            x = batch["xyz"][0]
+
+            # face feature guided loss
+            target_attn_attrs = torch.stack(
+                [
+                    attrs[self.syno_attn_attr]
+                    for attrs in result["output"]["layer_attrs"]
+                ]
+            )  # qs.shape = [layer,b,t,syno,patch,head]
+
+            if (len(target_attn_attrs.shape) == 4):
+                # shape = [l, b, synos, head*width]
+                # for: out, emb
+                pass
+            elif (len(target_attn_attrs.shape) == 5):
+                # shape = [l, b, synos, head,width]
+                # for: q, k, v
+                target_attn_attrs = target_attn_attrs.flatten(-2)
+            elif (len(target_attn_attrs.shape) == 6):
+                # shape = [l, b, t, synos, head, width]
+                # for: q, k, v
+                target_attn_attrs = target_attn_attrs.mean(2).flatten(-2)
+            else:
+                raise NotImplementedError()
+
+            face_features = self.face_features.to(
+                dtype=target_attn_attrs.dtype,
+                device=target_attn_attrs.device
+            )
+
+            if self.ffg_layers == -1:
+                pass
+            elif self.ffg_layers > 0:
+                if (self.ffg_reverse):
+                    face_features = face_features[: self.ffg_layers]
+                    target_attn_attrs = target_attn_attrs[: self.ffg_layers]
+                else:
+                    layers = (
+                        self.model.encoder.model.transformer.layers -
+                        self.ffg_layers
+                    )
+                    face_features = face_features[layers:]
+                    target_attn_attrs = target_attn_attrs[layers:]
+            else:
+                raise NotImplementedError()
+
+            l, b, q = target_attn_attrs.shape[:3]
+            face_features = face_features / face_features.norm(dim=-1, keepdim=True)
+            target_attn_attrs = target_attn_attrs / target_attn_attrs.norm(dim=-1, keepdim=True)
+
+            logits = self.ffg_temper * (target_attn_attrs @ face_features.transpose(-1, -2))
+
+            cls_sim = torch.nn.functional.cross_entropy(
+                logits.flatten(0, 2),
+                (
+                    torch.arange(
+                        0,
+                        self.num_face_parts
+                    )
+                    .repeat((l * b))
+                    .to(x.device)
+                ),
+                reduction="none"
+            ).mean()
+
+            self.log(
+                f"{stage}/{dts_name}/syno_sim",
+                cls_sim,
+                batch_size=x.shape[0]
+            )
+
+            result["loss"] += cls_sim * self.ffg_weight
+
+            grad_raw_grid = (
+                torch.stack(
+                    torch.autograd.grad(
+                        result["loss"],
+                        [layer.aff for layer in self.model.encoder.decoder.decoder_layers],
+                        grad_outputs=torch.ones_like(result["loss"]),
+                        retain_graph=True,
+                        create_graph=True
+                    )
+                ).abs() * self.grad_temper
+            )
+
+            attn_grid = (
+                torch.stack(
+                    [layer.aff for layer in self.model.encoder.decoder.decoder_layers]
+                )
+            ).detach()
+
+            grad_align = torch.nn.functional.kl_div(
+                torch.nn.functional.log_softmax(grad_raw_grid.flatten(3), dim=-1),
+                attn_grid.flatten(3),
+            )
+
+            self.log(
+                f"{stage}/{dts_name}/grad_align",
+                grad_align,
+                batch_size=x.shape[0]
+            )
+
+            result["loss"] += grad_align * self.ffe_weight
 
         return result
 
