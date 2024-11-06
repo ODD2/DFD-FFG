@@ -54,8 +54,9 @@ def load_args(args):
     parser.add_argument(
         '--min-crop-rate', default=0.9, type=float, help="minimum ratio of duration with tracked faces."
     )
+
     parser.add_argument(
-        '--d-rate', type=float, default=0.2, help="the maximum distance between the landmarks according to the ratio of face size."
+        '--d-rate', type=float, default=0.65, help="the maximum distance between the landmarks according to the ratio of face size."
     )
 
     parser.add_argument(
