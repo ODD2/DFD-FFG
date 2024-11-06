@@ -71,11 +71,11 @@ class DeepFakeDataset(Dataset):
         # build metadata
         for f in scandir(video_dir):
             if vid_ext in f.name:
-                vid_reader = torchvision.io.VideoReader(
-                    f.path,
-                    "video"
-                )
                 try:
+                    vid_reader = torchvision.io.VideoReader(
+                        f.path,
+                        "video"
+                    )
                     fps = vid_reader.get_metadata()["video"]["fps"][0]
                     duration = vid_reader.get_metadata()["video"]["duration"][0]
                     video_metas[f.name[:-len(vid_ext)]] = {
