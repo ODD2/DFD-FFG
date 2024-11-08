@@ -77,7 +77,7 @@ class PromptedVideoAttrExtractor(VideoAttrExtractor):
                 }
             )
 
-        embeds = x[:, :self.num_prompts]
+        embeds = x[:, :, :self.num_prompts].mean(dim=2)
 
         return dict(
             layer_attrs=layer_attrs,
@@ -156,7 +156,7 @@ class PromptedLinearVideoLearner(ODBinaryMetricClassifier):
             pretrain=pretrain,
             store_attrs=store_attrs,
             num_prompts=num_prompts,
-            prompt_mode=prompt_mode
+            prompt_mode=PromptMode[prompt_mode]
         )
         self.model = BinaryLinearClassifier(**params)
         self.label_weights = torch.tensor(label_weights)
@@ -228,7 +228,7 @@ if __name__ == "__main__":
         attn_record=False,
         text_embed=False,
         num_prompts=4,
-        prompt_mode=PromptMode.DEEP
+        prompt_mode=PromptMode.SHALLOW
     )
     model.to("cuda")
     result = model(torch.randn(5, frames, 3, 224, 224).to("cuda"))
