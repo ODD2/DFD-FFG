@@ -145,7 +145,7 @@ class PromptedLinearVideoLearner(ODBinaryMetricClassifier):
         cls_weight: float = 10.0,
         store_attrs: List[str] = [],
         num_prompts=1,
-        prompt_mode=PromptMode.DEEP
+        prompt_mode="DEEP"
     ):
         super().__init__()
         self.save_hyperparameters()
